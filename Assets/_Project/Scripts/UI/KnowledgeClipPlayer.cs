@@ -18,7 +18,7 @@ namespace Apex.UI
         [SerializeField] private VideoPlayer _videoPlayer;
         [SerializeField] private CanvasGroup _playerCanvas;
         [SerializeField] private GameObject _skipButton;
-        [SerializeField] private TMPro.TMP_Text _subtitleText;
+        [SerializeField] private UnityEngine.UI.Text _subtitleText;
 
         private int _currentClipIndex;
         private bool _isPlaying;

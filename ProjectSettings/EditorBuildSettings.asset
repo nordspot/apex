@@ -7,41 +7,12 @@ EditorBuildSettings:
   m_Scenes:
   - enabled: 1
     path: Assets/_Project/Scenes/_Boot.unity
-    guid:
+    guid: 42582080ac6d83048aee9cd188e02116
   - enabled: 1
     path: Assets/_Project/Scenes/MainMenu.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/CharacterCreator.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/IntroCinematic.unity
-    guid:
+    guid: 8b731c6fd3afd0a4196ec6ed21baf0d7
   - enabled: 1
     path: Assets/_Project/Scenes/Levels/Level_1_Reboot.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_2_Friend.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_3_Crossing.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_4_Power.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_5_Precision.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_6_Line.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_7_Breakthrough.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Levels/Level_8_Home.unity
-    guid:
-  - enabled: 1
-    path: Assets/_Project/Scenes/Credits.unity
-    guid:
+    guid: 39b55130d289eba458d4eea21ffbc1e7
   m_configObjects: {}
+  m_UseUCBPForAssetBundles: 0

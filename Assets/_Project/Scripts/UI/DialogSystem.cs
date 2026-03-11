@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UIElements;
 using Apex.Data;
 
 namespace Apex.UI
@@ -15,8 +16,8 @@ namespace Apex.UI
         public static event Action OnDialogEnded;
         public static event Action<string> OnDialogLineShown;
 
-        [SerializeField] private TMPro.TMP_Text _speakerNameText;
-        [SerializeField] private TMPro.TMP_Text _dialogText;
+        [SerializeField] private UnityEngine.UI.Text _speakerNameText;
+        [SerializeField] private UnityEngine.UI.Text _dialogText;
         [SerializeField] private Transform _choicesContainer;
         [SerializeField] private GameObject _choiceButtonPrefab;
         [SerializeField] private CanvasGroup _dialogCanvas;

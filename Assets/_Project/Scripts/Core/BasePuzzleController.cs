@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using Apex.Characters;
 
 namespace Apex.Core
 {
