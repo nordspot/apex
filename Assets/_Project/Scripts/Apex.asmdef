@@ -3,7 +3,7 @@
     "rootNamespace": "Apex",
     "references": [
         "Unity.InputSystem",
-        "Unity.TextMeshPro",
+        "Unity.ugui",
         "Unity.AI.Navigation",
         "Unity.Cinemachine",
         "Unity.Localization",

@@ -10,7 +10,7 @@ This is NOT an educational app. It is a real 3D adventure-puzzle game with cinem
 
 ## Tech Stack
 
-- **Engine:** Unity 6 LTS (latest stable 6000.x)
+- **Engine:** Unity 6.3 LTS (6000.3.10f1)
 - **Render Pipeline:** Universal Render Pipeline (URP) — Forward rendering path for maximum mobile compatibility
 - **Language:** C# (.NET Standard 2.1) — all game scripts
 - **IDE Integration:** Unity MCP (CoplayDev/unity-mcp) for Claude Code ↔ Unity Editor bidirectional communication
