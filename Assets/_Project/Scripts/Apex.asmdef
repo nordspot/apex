@@ -1,0 +1,22 @@
+{
+    "name": "Apex",
+    "rootNamespace": "Apex",
+    "references": [
+        "Unity.InputSystem",
+        "Unity.TextMeshPro",
+        "Unity.AI.Navigation",
+        "Unity.Cinemachine",
+        "Unity.Localization",
+        "Unity.Timeline",
+        "Unity.Addressables"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

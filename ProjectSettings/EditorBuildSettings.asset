@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/_Project/Scenes/_Boot.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/MainMenu.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/CharacterCreator.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/IntroCinematic.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_1_Reboot.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_2_Friend.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_3_Crossing.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_4_Power.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_5_Precision.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_6_Line.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_7_Breakthrough.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Levels/Level_8_Home.unity
+    guid:
+  - enabled: 1
+    path: Assets/_Project/Scenes/Credits.unity
+    guid:
+  m_configObjects: {}
