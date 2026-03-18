@@ -496,6 +496,8 @@ export class GameScene {
   };
 
   private updateMovement(delta: number) {
+    if (useUIStore.getState().gamePhase !== 'playing') return;
+
     const { moveX, moveY, interact } = useInputStore.getState();
     const repairState = usePlayerStore.getState().repairState;
     const speed = REPAIR_SPEEDS[repairState];
@@ -569,10 +571,8 @@ export class GameScene {
 
       // Crate recharge interaction
       if (nearCrate && allCollected) {
-        useUIStore.getState().showMessage(
-          'MEMO-9 fully recharged!\nReady for Level 2...',
-          6000,
-        );
+        useUIStore.getState().stopTimer();
+        useUIStore.getState().setGamePhase('complete');
         useInputStore.getState().setInteract(false);
       }
     }
