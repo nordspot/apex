@@ -78,12 +78,12 @@ export class GameScene {
   private prevRepairState = 0;
   private stateTransitionT = 1; // 0..1 transition progress
 
-  // Snow trail system
-  private trailMarks: THREE.Mesh[] = [];
-  private trailPool: THREE.Mesh[] = [];
-  private lastTrailPos = new THREE.Vector3();
-  private trailTimer = 0;
-  private readonly MAX_TRAILS = 200;
+  // Snow deformation mesh (high-density ground plane for footprints/drag marks)
+  private snowMesh: THREE.Mesh | null = null;
+  private snowBaseY: Float32Array | null = null; // original Y values
+  private snowGeo: THREE.PlaneGeometry | null = null;
+  private readonly SNOW_SIZE = 60;     // meters, covers play area
+  private readonly SNOW_SEGS = 200;    // vertex density for deformation
 
   private animFrameId = 0;
   private loader = new GLTFLoader();
@@ -223,9 +223,11 @@ export class GameScene {
       const limbBox = new THREE.Box3();
       for (const mesh of meshes) limbBox.union(mesh.geometry.boundingBox!);
 
+      // Shoulder pivot: inner edge x, slightly below top y (where the joint actually is)
+      const armHeight = limbBox.max.y - limbBox.min.y;
       const pivotPoint = new THREE.Vector3(
         armId === 'left_arm' ? limbBox.max.x : limbBox.min.x,
-        limbBox.max.y,
+        limbBox.max.y - armHeight * 0.08, // slightly below top for natural rotation
         (limbBox.min.z + limbBox.max.z) / 2,
       );
 
@@ -422,13 +424,39 @@ export class GameScene {
   }
 
   private setupGround() {
-    const geo = new THREE.PlaneGeometry(200, 200);
-    const mat = new THREE.ShadowMaterial({ opacity: 0.3 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = -0.01;
-    mesh.receiveShadow = true;
-    this.scene.add(mesh);
+    // Shadow-only plane underneath everything
+    const shadowGeo = new THREE.PlaneGeometry(200, 200);
+    const shadowMat = new THREE.ShadowMaterial({ opacity: 0.3 });
+    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+    shadowMesh.rotation.x = -Math.PI / 2;
+    shadowMesh.position.y = -0.02;
+    shadowMesh.receiveShadow = true;
+    this.scene.add(shadowMesh);
+
+    // High-density deformable snow surface for footprints/drag marks
+    const snowGeo = new THREE.PlaneGeometry(this.SNOW_SIZE, this.SNOW_SIZE, this.SNOW_SEGS, this.SNOW_SEGS);
+    snowGeo.rotateX(-Math.PI / 2);
+
+    const snowMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(0.93, 0.93, 0.96),
+      roughness: 0.9,
+      metalness: 0,
+    });
+    const snowMesh = new THREE.Mesh(snowGeo, snowMat);
+    snowMesh.position.set(0, 0.001, 10); // centered on play area, slightly above terrain
+    snowMesh.receiveShadow = true;
+    this.scene.add(snowMesh);
+
+    // Store base Y values for deformation reference
+    const posAttr = snowGeo.attributes.position;
+    const baseY = new Float32Array(posAttr.count);
+    for (let i = 0; i < posAttr.count; i++) {
+      baseY[i] = posAttr.getY(i);
+    }
+
+    this.snowMesh = snowMesh;
+    this.snowGeo = snowGeo;
+    this.snowBaseY = baseY;
   }
 
   private createCrate() {
@@ -633,60 +661,56 @@ export class GameScene {
     let leftKnee = 0, rightKnee = 0;
     let leftArm = 0, rightArm = 0;
 
-    // ========== STATE 0: BROKEN — face down, no limbs ==========
+    // ========== STATE 0: BROKEN — face down, left arm only ==========
     if (repairState === 0) {
-      // Breathing / twitching
+      // Left arm is always attached — it tries to drag the body
       const breathe = Math.sin(t * 0.6) * 0.01;
       if (isMoving) {
-        // Inchworm: contract body, rock forward, extend
-        // Phase 1 (sin>0): body contracts (lifts center slightly), leans forward
-        // Phase 2 (sin<0): body extends, slides forward
-        const worm = Math.sin(t);
-        const wormAbs = Math.abs(worm);
-        animY = wormAbs * 0.035;                          // tiny body lift during contraction
-        animRotX = worm * 0.12;                           // rock forward/backward
-        animRotZ = Math.sin(t * 0.7) * 0.15;             // side-to-side writhing
+        // Left arm does a desperate one-arm crawl
+        const crawl = Math.sin(t);
+        leftArm = crawl * 0.7;               // reach forward, pull back
+
+        // Body rocks with arm effort
+        const pull = Math.max(0, crawl);
+        animY = pull * 0.03;                  // tiny lift during pull
+        animRotX = crawl * 0.1;              // rock with arm
+        animRotZ = Math.sin(t * 0.7) * 0.12 + crawl * 0.06; // body twists toward pulling arm
       } else {
+        // Idle: left arm twitches, breathing
         animY = breathe;
-        animRotZ = Math.sin(t * 0.5) * 0.04;             // slight side twitch
+        animRotZ = Math.sin(t * 0.5) * 0.04;
         animRotX = Math.sin(t * 0.3) * 0.02;
+        leftArm = Math.sin(t * 0.4) * 0.06;  // slight idle movement
       }
     }
 
-    // ========== STATE 1: ONE ARM CRAWL (right_arm collected) ==========
+    // ========== STATE 1: TWO ARM CRAWL (right_arm collected) ==========
     else if (repairState === 1) {
       if (isMoving) {
-        // Army crawl cycle: arm reaches forward, grabs, pulls body
-        // Phase breakdown over full cycle (0..2PI):
-        //   reach phase: arm extends forward (rotX negative = forward when model flipped)
-        //   pull phase: arm pulls back, body lifts and advances
-        //   recovery: arm starts reaching again
+        // Both arms crawling in alternating rhythm
+        const reach = Math.sin(t);
 
-        const reach = Math.sin(t);            // -1..1 cycle
-        const pull = Math.max(0, reach);      // only positive half = pull phase
-        // reach phase is when reach < 0 (arm extending forward)
+        // Arms alternate: when right reaches forward, left pulls back
+        rightArm = reach * 0.85;
+        leftArm = -reach * 0.85;             // opposite phase
 
-        // Right arm: reaches far forward then pulls back hard
-        rightArm = reach * 0.9;              // big swing: forward reach to backward pull
+        // Body driven by whichever arm is pulling
+        const rightPull = Math.max(0, reach);
+        const leftPull = Math.max(0, -reach);
+        animY = Math.max(rightPull, leftPull) * 0.05; // lifts during either pull
 
-        // Body motion driven by arm pull
-        animY = pull * 0.06;                  // body lifts during pull
-        animRotX = reach * 0.1;              // chest dips during reach, lifts during pull
+        // Body rocks side-to-side following the pulling arm
+        animRotZ = reach * 0.14;             // lean toward pulling side
+        animRotX = Math.sin(t * 2) * 0.06;  // chest pump at double frequency
 
-        // Body twist — torso rotates toward reaching arm
-        animRotZ = Math.sin(t) * 0.12 + Math.sin(t * 0.5) * 0.05;
-
-        // Drag shimmy: body rocks side-to-side at 2x frequency
-        const shimmy = Math.sin(t * 2) * 0.03;
-        animY += shimmy;
-
-        // Subtle secondary: body twist/yaw feel
-        animRotX += Math.sin(t * 1.5) * 0.025;
+        // Drag shimmy
+        animY += Math.sin(t * 2) * 0.02;
       } else {
-        // Idle: lying with arm resting, gentle breathing
+        // Idle: both arms resting, gentle breathing
         animY = Math.sin(t * 0.5) * 0.008;
         animRotZ = Math.sin(t * 0.6) * 0.025;
-        rightArm = Math.sin(t * 0.4) * 0.08 + 0.1; // arm slightly forward, resting
+        rightArm = Math.sin(t * 0.4) * 0.06 + 0.08;
+        leftArm = Math.sin(t * 0.4 + 1) * 0.06 + 0.08;
       }
     }
 
@@ -815,115 +839,144 @@ export class GameScene {
     const rightArmPivot = this.limbPivots.get('right_arm');
     if (rightArmPivot) rightArmPivot.rotation.x = THREE.MathUtils.lerp(rightArmPivot.rotation.x, rightArm, limbLerp);
 
-    // ========== SNOW TRAILS ==========
-    this.updateSnowTrails(delta, isMoving, repairState);
+    // ========== SNOW DEFORMATION ==========
+    this.deformSnow(isMoving, repairState);
   }
 
-  private updateSnowTrails(delta: number, isMoving: boolean, repairState: number) {
-    if (!isMoving) {
-      this.lastTrailPos.copy(this.memo9.position);
-      return;
-    }
-
-    this.trailTimer += delta;
-
-    // Trail spawn interval varies by state
-    const interval = repairState === 0 ? 0.08 : repairState === 1 ? 0.12 : repairState === 2 ? 0.25 : 0.2;
-
-    if (this.trailTimer < interval) return;
-    this.trailTimer = 0;
+  private deformSnow(isMoving: boolean, repairState: number) {
+    if (!this.snowGeo || !this.snowBaseY || !this.snowMesh || !isMoving) return;
 
     const pos = this.memo9.position;
-    const dist = pos.distanceTo(this.lastTrailPos);
-    if (dist < 0.05) return;
-
-    this.lastTrailPos.copy(pos);
     const angle = this.memo9.rotation.y;
+    const snowPos = this.snowMesh.position;
+    const posAttr = this.snowGeo.attributes.position;
+    const halfSize = this.SNOW_SIZE / 2;
+    const step = this.SNOW_SIZE / this.SNOW_SEGS; // distance between vertices
 
+    // Contact parameters per state
+    let radius: number, depth: number, widthScale: number;
     if (repairState === 0) {
-      // Wide body drag mark
-      this.spawnTrailMark(pos.x, pos.z, angle, 0.6, 0.9, 0.2);
+      radius = 1.2;  depth = 0.04;  widthScale = 1.5; // wide body drag
     } else if (repairState === 1) {
-      // Body drag + arm scratch marks
-      this.spawnTrailMark(pos.x, pos.z, angle, 0.5, 0.7, 0.18);
-      // Arm scratch offset to one side
-      const armX = pos.x + Math.cos(angle) * 0.3;
-      const armZ = pos.z - Math.sin(angle) * 0.3;
-      this.spawnTrailMark(armX, armZ, angle + 0.3, 0.15, 0.4, 0.25);
+      radius = 0.8;  depth = 0.035; widthScale = 1.3; // body drag
     } else if (repairState === 2) {
-      // Single footprint (left leg only) on alternating steps
-      const stepping = Math.sin(this.walkCycle) > 0.3;
-      if (stepping) {
-        const footX = pos.x - Math.cos(angle) * 0.15;
-        const footZ = pos.z + Math.sin(angle) * 0.15;
-        this.spawnTrailMark(footX, footZ, angle, 0.12, 0.2, 0.3);
-      }
-      // Drag mark from missing leg side
-      const dragX = pos.x + Math.cos(angle) * 0.2;
-      const dragZ = pos.z - Math.sin(angle) * 0.2;
-      this.spawnTrailMark(dragX, dragZ, angle, 0.08, 0.35, 0.12);
+      radius = 0.25; depth = 0.025; widthScale = 1.0; // single foot
     } else {
-      // Dual footprints
-      const leftStep = Math.sin(this.walkCycle) > 0.5;
-      const rightStep = Math.sin(this.walkCycle) < -0.5;
-      if (leftStep) {
-        const fx = pos.x - Math.cos(angle) * 0.15;
-        const fz = pos.z + Math.sin(angle) * 0.15;
-        this.spawnTrailMark(fx, fz, angle, 0.1, 0.18, 0.35);
+      radius = 0.2;  depth = 0.02;  widthScale = 1.0; // footprints
+    }
+
+    // Robot position in snow-local space
+    const localX = pos.x - snowPos.x;
+    const localZ = pos.z - snowPos.z;
+
+    // Only deform vertices within range (optimize by checking bounding box first)
+    const scanRange = radius + 0.5;
+    const minI = Math.max(0, Math.floor(((localX - scanRange) + halfSize) / step));
+    const maxI = Math.min(this.SNOW_SEGS, Math.ceil(((localX + scanRange) + halfSize) / step));
+    const minJ = Math.max(0, Math.floor(((localZ - scanRange) + halfSize) / step));
+    const maxJ = Math.min(this.SNOW_SEGS, Math.ceil(((localZ + scanRange) + halfSize) / step));
+
+    let modified = false;
+
+    for (let j = minJ; j <= maxJ; j++) {
+      for (let i = minI; i <= maxI; i++) {
+        const idx = j * (this.SNOW_SEGS + 1) + i;
+        const vx = posAttr.getX(idx);
+        const vz = posAttr.getZ(idx);
+
+        // Distance from vertex to contact point, with directional width scaling
+        const dx = vx - localX;
+        const dz = vz - localZ;
+
+        // Rotate into contact-aligned space for elliptical contact
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        const alignedX = dx * cosA + dz * sinA;
+        const alignedZ = (-dx * sinA + dz * cosA) * widthScale;
+
+        const dist = Math.sqrt(alignedX * alignedX + alignedZ * alignedZ);
+
+        if (dist < radius) {
+          // Smooth falloff using cosine curve
+          const factor = 0.5 * (1 + Math.cos(Math.PI * dist / radius));
+          const currentY = posAttr.getY(idx);
+          const targetY = this.snowBaseY[idx] - depth * factor;
+
+          // Only push down, never up (snow stays deformed)
+          if (targetY < currentY) {
+            posAttr.setY(idx, targetY);
+            modified = true;
+          }
+        }
       }
-      if (rightStep) {
-        const fx = pos.x + Math.cos(angle) * 0.15;
-        const fz = pos.z - Math.sin(angle) * 0.15;
-        this.spawnTrailMark(fx, fz, angle, 0.1, 0.18, 0.35);
+    }
+
+    // State 2: additional drag mark from missing leg side
+    if (repairState === 2) {
+      const dragOffX = localX + Math.cos(angle) * 0.2;
+      const dragOffZ = localZ - Math.sin(angle) * 0.2;
+      const dragRadius = 0.15;
+      const dragDepth = 0.015;
+      const dMinI = Math.max(0, Math.floor(((dragOffX - dragRadius) + halfSize) / step));
+      const dMaxI = Math.min(this.SNOW_SEGS, Math.ceil(((dragOffX + dragRadius) + halfSize) / step));
+      const dMinJ = Math.max(0, Math.floor(((dragOffZ - dragRadius) + halfSize) / step));
+      const dMaxJ = Math.min(this.SNOW_SEGS, Math.ceil(((dragOffZ + dragRadius) + halfSize) / step));
+
+      for (let j = dMinJ; j <= dMaxJ; j++) {
+        for (let i = dMinI; i <= dMaxI; i++) {
+          const idx = j * (this.SNOW_SEGS + 1) + i;
+          const vx = posAttr.getX(idx);
+          const vz = posAttr.getZ(idx);
+          const dist = Math.sqrt((vx - dragOffX) ** 2 + (vz - dragOffZ) ** 2);
+          if (dist < dragRadius) {
+            const factor = 0.5 * (1 + Math.cos(Math.PI * dist / dragRadius));
+            const currentY = posAttr.getY(idx);
+            const targetY = this.snowBaseY[idx] - dragDepth * factor;
+            if (targetY < currentY) {
+              posAttr.setY(idx, targetY);
+              modified = true;
+            }
+          }
+        }
       }
     }
-  }
 
-  private spawnTrailMark(x: number, z: number, angle: number, width: number, length: number, opacity: number) {
-    let mark: THREE.Mesh;
+    // State 3: dual footprints offset to each side
+    if (repairState === 3) {
+      const perpX = Math.cos(angle);
+      const perpZ = -Math.sin(angle);
+      for (const side of [-1, 1]) {
+        const fx = localX + perpX * 0.15 * side;
+        const fz = localZ + perpZ * 0.15 * side;
+        const fRadius = 0.12;
+        const fMinI = Math.max(0, Math.floor(((fx - fRadius) + halfSize) / step));
+        const fMaxI = Math.min(this.SNOW_SEGS, Math.ceil(((fx + fRadius) + halfSize) / step));
+        const fMinJ = Math.max(0, Math.floor(((fz - fRadius) + halfSize) / step));
+        const fMaxJ = Math.min(this.SNOW_SEGS, Math.ceil(((fz + fRadius) + halfSize) / step));
 
-    if (this.trailPool.length > 0) {
-      mark = this.trailPool.pop()!;
-      mark.visible = true;
-    } else {
-      const geo = new THREE.PlaneGeometry(1, 1);
-      const mat = new THREE.MeshStandardMaterial({
-        color: '#8B9DAF',
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        roughness: 1,
-        metalness: 0,
-      });
-      mark = new THREE.Mesh(geo, mat);
-      mark.rotation.x = -Math.PI / 2;
-      this.scene.add(mark);
+        for (let j = fMinJ; j <= fMaxJ; j++) {
+          for (let i = fMinI; i <= fMaxI; i++) {
+            const idx = j * (this.SNOW_SEGS + 1) + i;
+            const vx = posAttr.getX(idx);
+            const vz = posAttr.getZ(idx);
+            const dist = Math.sqrt((vx - fx) ** 2 + (vz - fz) ** 2);
+            if (dist < fRadius) {
+              const factor = 0.5 * (1 + Math.cos(Math.PI * dist / fRadius));
+              const currentY = posAttr.getY(idx);
+              const targetY = this.snowBaseY[idx] - 0.015 * factor;
+              if (targetY < currentY) {
+                posAttr.setY(idx, targetY);
+                modified = true;
+              }
+            }
+          }
+        }
+      }
     }
 
-    mark.position.set(x, 0.005, z);
-    mark.rotation.y = angle;
-    mark.rotation.z = 0;
-    mark.scale.set(width, length, 1);
-    (mark.material as THREE.MeshStandardMaterial).opacity = opacity;
-
-    this.trailMarks.push(mark);
-
-    // Recycle oldest marks
-    while (this.trailMarks.length > this.MAX_TRAILS) {
-      const old = this.trailMarks.shift()!;
-      old.visible = false;
-      this.trailPool.push(old);
-    }
-
-    // Fade older marks
-    const count = this.trailMarks.length;
-    for (let i = 0; i < count; i++) {
-      const age = 1 - i / count;
-      const m = this.trailMarks[i];
-      const mat = m.material as THREE.MeshStandardMaterial;
-      const baseOpacity = parseFloat(mat.userData.baseOpacity ?? mat.opacity);
-      if (!mat.userData.baseOpacity) mat.userData.baseOpacity = mat.opacity;
-      mat.opacity = baseOpacity * (1 - age * 0.7);
+    if (modified) {
+      posAttr.needsUpdate = true;
+      this.snowGeo.computeVertexNormals();
     }
   }
 

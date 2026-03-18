@@ -1,16 +1,23 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { BRAND } from '../constants/brand';
 import { useUIStore } from '../stores/useUIStore';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { saveHighScore, getHighScores, formatTime, type HighScore } from '../utils/highscores';
 
 export function CompletionScreen() {
-  const elapsed = useUIStore.getState().getElapsedMs();
+  // Capture elapsed once on mount (timer is already stopped)
+  const elapsed = useMemo(() => {
+    const { startTime, endTime } = useUIStore.getState();
+    if (!startTime) return 0;
+    return (endTime ?? Date.now()) - startTime;
+  }, []);
+
   const [name, setName] = useState('');
   const [scores, setScores] = useState<HighScore[]>(() => getHighScores());
   const [saved, setSaved] = useState(false);
 
   function handleSave() {
+    if (elapsed <= 0) return; // guard against invalid times
     const updated = saveHighScore(name || 'Spieler', elapsed);
     setScores(updated);
     setSaved(true);
@@ -18,7 +25,10 @@ export function CompletionScreen() {
 
   function handleReplay() {
     usePlayerStore.getState().reset();
-    useUIStore.getState().setGamePhase('start');
+    const store = useUIStore.getState();
+    store.setGamePhase('start');
+    // Reset timer state for next play
+    useUIStore.setState({ startTime: null, endTime: null });
   }
 
   return (
