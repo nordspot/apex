@@ -94,7 +94,7 @@ export function Onboarding() {
           maxWidth: 340,
           textAlign: 'center',
           boxShadow: `0 0 40px ${BRAND.glow}`,
-          animation: 'fadeInUp 0.3s ease-out',
+          animation: 'fadeIn 0.3s ease-out',
         }}
       >
         <div style={{ fontSize: 48, marginBottom: 16 }}>{current.icon}</div>
