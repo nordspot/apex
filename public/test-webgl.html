@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebGL Test</title>
+  <style>body{margin:0;overflow:hidden;background:#000}canvas{display:block;width:100vw;height:100vh}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  alpha: true,
+  powerPreference: 'high-performance',
+  failIfMajorPerformanceCaveat: false,
+});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x336699, 1);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x336699);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 500);
+camera.position.set(0, 2, 5);
+camera.lookAt(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 1));
+
+const mesh = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshBasicMaterial({ color: 0xff6600 })
+);
+scene.add(mesh);
+
+function animate() {
+  mesh.rotation.y += 0.01;
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+document.title = 'WebGL OK - ' + renderer.info.render.frame;
+</script>
+</body>
+</html>
