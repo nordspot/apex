@@ -74,6 +74,16 @@ export class GameScene {
   private robotBaseY = 0;
   private targetPoseY = 0;
   private targetPoseRotX = 0;
+  private targetPoseRotZ = 0;
+  private prevRepairState = 0;
+  private stateTransitionT = 1; // 0..1 transition progress
+
+  // Snow trail system
+  private trailMarks: THREE.Mesh[] = [];
+  private trailPool: THREE.Mesh[] = [];
+  private lastTrailPos = new THREE.Vector3();
+  private trailTimer = 0;
+  private readonly MAX_TRAILS = 200;
 
   private animFrameId = 0;
   private loader = new GLTFLoader();
@@ -584,153 +594,336 @@ export class GameScene {
     const isMoving = usePlayerStore.getState().isMoving;
     const repairState = usePlayerStore.getState().repairState;
 
-    // --- Base posture per repair state ---
-    // goalY offsets from robotBaseY (standing height). Negative = sink toward ground.
-    // The forward tilt (goalRotX) visually lifts the feet, so we must compensate by
-    // sinking the model further in low states.
-    const h = this.robotBaseY;
-    let goalY: number;
-    let goalRotX: number;
+    // Detect state transitions
+    if (repairState !== this.prevRepairState) {
+      this.prevRepairState = repairState;
+      this.stateTransitionT = 0;
+    }
+    this.stateTransitionT = Math.min(this.stateTransitionT + delta * 0.8, 1);
+
+    const h = this.robotBaseY; // standing height
+
+    // ========== BASE POSTURE PER STATE ==========
+    let goalY: number, goalRotX: number, goalRotZ: number;
     if (repairState === 0) {
-      goalY = -h;                // origin at ground level, tilted face-down
-      goalRotX = 1.3;
+      goalY = -h;           goalRotX = 1.45;  goalRotZ = 0;
     } else if (repairState === 1) {
-      goalY = -h * 0.9;         // nearly flat on ground, crawling
-      goalRotX = 0.9;
+      goalY = -h * 0.88;    goalRotX = 1.0;   goalRotZ = 0;
     } else if (repairState === 2) {
-      goalY = -h * 0.15;        // slight crouch
-      goalRotX = 0.2;
+      goalY = -h * 0.12;    goalRotX = 0.15;  goalRotZ = 0.06;
     } else {
-      goalY = 0;                 // full standing
-      goalRotX = 0;
+      goalY = 0;             goalRotX = 0;     goalRotZ = 0;
     }
 
-    const poseLerp = Math.min(5 * delta, 1);
+    const poseLerp = Math.min(3 * delta, 1);
     this.targetPoseY = THREE.MathUtils.lerp(this.targetPoseY, goalY, poseLerp);
     this.targetPoseRotX = THREE.MathUtils.lerp(this.targetPoseRotX, goalRotX, poseLerp);
+    this.targetPoseRotZ = THREE.MathUtils.lerp(this.targetPoseRotZ, goalRotZ, poseLerp);
 
-    // --- Walk cycle ---
-    if (isMoving) {
-      const cycleSpeed = repairState === 0 ? 2 : repairState === 1 ? 3.5 : repairState === 2 ? 5 : 8;
-      this.walkCycle += delta * cycleSpeed;
-    } else {
-      this.walkCycle += delta * 1.2;
-    }
+    // ========== WALK CYCLE ==========
+    const cycleSpeed = isMoving
+      ? (repairState === 0 ? 1.8 : repairState === 1 ? 2.8 : repairState === 2 ? 4.5 : 7)
+      : 0.8;
+    this.walkCycle += delta * cycleSpeed;
     const t = this.walkCycle;
 
-    // --- Body animation ---
-    let animY = 0;
-    let animRotX = 0;
-    let animRotZ = 0;
+    // ========== ANIMATION OUTPUTS ==========
+    let animY = 0, animRotX = 0, animRotZ = 0;
+    let leftHip = 0, rightHip = 0;
+    let leftKnee = 0, rightKnee = 0;
+    let leftArm = 0, rightArm = 0;
 
-    // --- Limb swing angles (hip rotation + knee bend) ---
-    let leftHipSwing = 0;
-    let rightHipSwing = 0;
-    let leftKneeBend = 0;
-    let rightKneeBend = 0;
-    let leftArmSwing = 0;
-    let rightArmSwing = 0;
-
+    // ========== STATE 0: BROKEN — face down, no limbs ==========
     if (repairState === 0) {
+      // Breathing / twitching
+      const breathe = Math.sin(t * 0.6) * 0.01;
       if (isMoving) {
-        animY = Math.abs(Math.sin(t)) * 0.02;
-        animRotX = Math.sin(t * 2) * 0.06;
-        animRotZ = Math.sin(t) * 0.12;
+        // Inchworm: contract body, rock forward, extend
+        // Phase 1 (sin>0): body contracts (lifts center slightly), leans forward
+        // Phase 2 (sin<0): body extends, slides forward
+        const worm = Math.sin(t);
+        const wormAbs = Math.abs(worm);
+        animY = wormAbs * 0.035;                          // tiny body lift during contraction
+        animRotX = worm * 0.12;                           // rock forward/backward
+        animRotZ = Math.sin(t * 0.7) * 0.15;             // side-to-side writhing
       } else {
-        animRotZ = Math.sin(t * 0.7) * 0.03;
-      }
-    } else if (repairState === 1) {
-      if (isMoving) {
-        animY = Math.abs(Math.sin(t)) * 0.04;
-        animRotX = Math.sin(t) * 0.08;
-        animRotZ = Math.sin(t * 0.5) * 0.1;
-        rightArmSwing = Math.sin(t) * 0.6;
-      } else {
-        animY = Math.sin(t) * 0.01;
-        animRotZ = Math.sin(t * 0.8) * 0.02;
-        rightArmSwing = Math.sin(t * 0.5) * 0.1;
-      }
-    } else if (repairState === 2) {
-      if (isMoving) {
-        const cycle = Math.sin(t);
-        animY = (cycle > 0 ? cycle * 0.06 : cycle * 0.02);
-        animRotX = -0.03 + Math.sin(t * 2) * 0.02;
-        animRotZ = Math.sin(t) * 0.08;
-        // One leg hobbling with knee bend
-        leftHipSwing = Math.sin(t) * 0.4;
-        leftKneeBend = -Math.max(0, -Math.sin(t)) * 0.6; // bend when leg swings back
-        rightArmSwing = -Math.sin(t) * 0.3;
-        leftArmSwing = Math.sin(t) * 0.2;
-      } else {
-        animY = Math.sin(t) * 0.01;
-        animRotZ = 0.04;
-        leftHipSwing = Math.sin(t * 0.5) * 0.05;
-      }
-    } else {
-      // State 3: full humanoid walk with knee bending
-      if (isMoving) {
-        animY = Math.abs(Math.sin(t)) * 0.05;
-        animRotX = -0.03;
-        animRotZ = Math.sin(t) * 0.025;
-
-        // Hip swing: alternating forward/back
-        leftHipSwing = Math.sin(t) * 0.5;
-        rightHipSwing = -Math.sin(t) * 0.5;
-
-        // Knee bend: negative rotation bends knee forward (model is flipped 180°)
-        leftKneeBend = -Math.max(0, Math.sin(t - 0.5)) * 0.7;
-        rightKneeBend = -Math.max(0, Math.sin(t + Math.PI - 0.5)) * 0.7;
-
-        // Arms counter-swing
-        leftArmSwing = -Math.sin(t) * 0.35;
-        rightArmSwing = Math.sin(t) * 0.35;
-      } else {
-        animY = Math.sin(t) * 0.01;
-        leftHipSwing = Math.sin(t * 0.3) * 0.02;
-        rightHipSwing = -Math.sin(t * 0.3) * 0.02;
+        animY = breathe;
+        animRotZ = Math.sin(t * 0.5) * 0.04;             // slight side twitch
+        animRotX = Math.sin(t * 0.3) * 0.02;
       }
     }
 
-    // Apply body posture + animation
+    // ========== STATE 1: ONE ARM CRAWL (right_arm collected) ==========
+    else if (repairState === 1) {
+      if (isMoving) {
+        // Army crawl cycle: arm reaches forward, grabs, pulls body
+        // Phase breakdown over full cycle (0..2PI):
+        //   reach phase: arm extends forward (rotX negative = forward when model flipped)
+        //   pull phase: arm pulls back, body lifts and advances
+        //   recovery: arm starts reaching again
+
+        const reach = Math.sin(t);            // -1..1 cycle
+        const pull = Math.max(0, reach);      // only positive half = pull phase
+        // reach phase is when reach < 0 (arm extending forward)
+
+        // Right arm: reaches far forward then pulls back hard
+        rightArm = reach * 0.9;              // big swing: forward reach to backward pull
+
+        // Body motion driven by arm pull
+        animY = pull * 0.06;                  // body lifts during pull
+        animRotX = reach * 0.1;              // chest dips during reach, lifts during pull
+
+        // Body twist — torso rotates toward reaching arm
+        animRotZ = Math.sin(t) * 0.12 + Math.sin(t * 0.5) * 0.05;
+
+        // Drag shimmy: body rocks side-to-side at 2x frequency
+        const shimmy = Math.sin(t * 2) * 0.03;
+        animY += shimmy;
+
+        // Subtle secondary: body twist/yaw feel
+        animRotX += Math.sin(t * 1.5) * 0.025;
+      } else {
+        // Idle: lying with arm resting, gentle breathing
+        animY = Math.sin(t * 0.5) * 0.008;
+        animRotZ = Math.sin(t * 0.6) * 0.025;
+        rightArm = Math.sin(t * 0.4) * 0.08 + 0.1; // arm slightly forward, resting
+      }
+    }
+
+    // ========== STATE 2: HOBBLING (right_arm + left_leg) ==========
+    else if (repairState === 2) {
+      if (isMoving) {
+        // Asymmetric hobbling gait: left leg does all the work
+        // Missing right leg means body dips hard on right side each step
+
+        // Left leg stride
+        const stride = Math.sin(t);
+        leftHip = stride * 0.55;
+
+        // Left knee bends during swing-through (when hip is moving forward)
+        // Negative X rotation = forward knee bend (model flipped)
+        leftKnee = -Math.max(0, Math.sin(t - 0.6)) * 0.8;
+
+        // Body dip: drops down when "stepping" on the missing leg side
+        // The missing leg phase is when left leg is forward (planted) = sin > 0
+        const dip = Math.max(0, stride);
+        const support = Math.max(0, -stride);
+        animY = -dip * 0.08 + support * 0.03;
+
+        // Pronounced lateral lean: body tips toward missing leg
+        animRotZ = stride * 0.12 + 0.04;     // constant lean + oscillation
+
+        // Forward lean compensation
+        animRotX = -0.04 + Math.sin(t * 2) * 0.02;
+
+        // Arms for balance
+        rightArm = -stride * 0.4;     // counter-swing
+        leftArm = stride * 0.25;      // less swing (secondary)
+
+        // Stagger: slight uneven timing feel
+        animY += Math.sin(t * 3) * 0.01;
+      } else {
+        // Idle: standing on one leg, swaying
+        animY = Math.sin(t * 0.4) * 0.015;
+        animRotZ = 0.05 + Math.sin(t * 0.5) * 0.03;  // slight lean toward missing leg
+        leftHip = Math.sin(t * 0.3) * 0.04;
+        rightArm = Math.sin(t * 0.4) * 0.05;
+      }
+    }
+
+    // ========== STATE 3: FULL WALK — proper bipedal gait ==========
+    else {
+      if (isMoving) {
+        // Professional walk cycle with proper phases:
+        // Left leg forward when sin(t) > 0, right when sin(t) < 0
+        // Contact → Down → Passing → Up → Contact
+
+        // Hip swing: alternating stride
+        leftHip = Math.sin(t) * 0.45;
+        rightHip = -Math.sin(t) * 0.45;
+
+        // Knee bending (negative X = forward bend, model flipped):
+        // Knee bends during swing phase (leg moving forward) peaking at mid-swing
+        // Also slight bend at contact for shock absorption
+        const leftSwing = Math.max(0, Math.sin(t - 0.3));
+        const rightSwing = Math.max(0, Math.sin(t + Math.PI - 0.3));
+        const leftContact = Math.max(0, Math.sin(t + 0.5)) * 0.15;
+        const rightContact = Math.max(0, Math.sin(t + Math.PI + 0.5)) * 0.15;
+        leftKnee = -(leftSwing * 0.65 + leftContact);
+        rightKnee = -(rightSwing * 0.65 + rightContact);
+
+        // Vertical bounce: double-frequency bob (up at mid-stance of each leg)
+        animY = Math.abs(Math.sin(t)) * 0.04;
+
+        // Lateral weight shift: body sways over the planted foot
+        animRotZ = Math.sin(t) * 0.03;
+
+        // Slight forward lean when walking
+        animRotX = -0.04;
+
+        // Arms counter-swing (opposite to legs, slight delay)
+        leftArm = -Math.sin(t + 0.15) * 0.35;
+        rightArm = Math.sin(t + 0.15) * 0.35;
+
+        // Spine twist: subtle upper body counter-rotation
+        animRotX += Math.sin(t * 2) * 0.01;
+      } else {
+        // Idle: subtle weight shift, breathing
+        const breathe = Math.sin(t * 0.6);
+        animY = breathe * 0.008;
+        animRotZ = Math.sin(t * 0.35) * 0.012;
+
+        // Subtle idle sway in legs
+        leftHip = Math.sin(t * 0.25) * 0.02;
+        rightHip = -Math.sin(t * 0.25) * 0.02;
+
+        // Arms rest with gentle sway
+        leftArm = Math.sin(t * 0.3) * 0.03;
+        rightArm = -Math.sin(t * 0.3) * 0.03;
+      }
+    }
+
+    // ========== APPLY TO MODEL ==========
     this.robotModel.position.y = this.robotBaseY + this.targetPoseY + animY;
     this.robotModel.rotation.x = this.targetPoseRotX + animRotX;
+
+    const targetZ = this.targetPoseRotZ + animRotZ;
     this.robotModel.rotation.z = THREE.MathUtils.lerp(
       this.robotModel.rotation.z,
-      animRotZ,
-      8 * delta,
+      targetZ,
+      Math.min(8 * delta, 1),
     );
 
-    // Apply limb pivot rotations
-    const limbLerp = Math.min(12 * delta, 1);
+    // ========== APPLY LIMB ROTATIONS ==========
+    const limbLerp = Math.min(14 * delta, 1);
 
-    // Hip pivots (forward/back swing)
-    const leftHip = this.limbPivots.get('left_leg');
-    if (leftHip) {
-      leftHip.rotation.x = THREE.MathUtils.lerp(leftHip.rotation.x, leftHipSwing, limbLerp);
-    }
-    const rightHip = this.limbPivots.get('right_leg');
-    if (rightHip) {
-      rightHip.rotation.x = THREE.MathUtils.lerp(rightHip.rotation.x, rightHipSwing, limbLerp);
+    const leftHipPivot = this.limbPivots.get('left_leg');
+    if (leftHipPivot) leftHipPivot.rotation.x = THREE.MathUtils.lerp(leftHipPivot.rotation.x, leftHip, limbLerp);
+
+    const rightHipPivot = this.limbPivots.get('right_leg');
+    if (rightHipPivot) rightHipPivot.rotation.x = THREE.MathUtils.lerp(rightHipPivot.rotation.x, rightHip, limbLerp);
+
+    const leftKneePivot = this.kneePivots.get('left_leg');
+    if (leftKneePivot) leftKneePivot.rotation.x = THREE.MathUtils.lerp(leftKneePivot.rotation.x, leftKnee, limbLerp);
+
+    const rightKneePivot = this.kneePivots.get('right_leg');
+    if (rightKneePivot) rightKneePivot.rotation.x = THREE.MathUtils.lerp(rightKneePivot.rotation.x, rightKnee, limbLerp);
+
+    const leftArmPivot = this.limbPivots.get('left_arm');
+    if (leftArmPivot) leftArmPivot.rotation.x = THREE.MathUtils.lerp(leftArmPivot.rotation.x, leftArm, limbLerp);
+
+    const rightArmPivot = this.limbPivots.get('right_arm');
+    if (rightArmPivot) rightArmPivot.rotation.x = THREE.MathUtils.lerp(rightArmPivot.rotation.x, rightArm, limbLerp);
+
+    // ========== SNOW TRAILS ==========
+    this.updateSnowTrails(delta, isMoving, repairState);
+  }
+
+  private updateSnowTrails(delta: number, isMoving: boolean, repairState: number) {
+    if (!isMoving) {
+      this.lastTrailPos.copy(this.memo9.position);
+      return;
     }
 
-    // Knee pivots (bend backward only)
-    const leftKnee = this.kneePivots.get('left_leg');
-    if (leftKnee) {
-      leftKnee.rotation.x = THREE.MathUtils.lerp(leftKnee.rotation.x, leftKneeBend, limbLerp);
+    this.trailTimer += delta;
+
+    // Trail spawn interval varies by state
+    const interval = repairState === 0 ? 0.08 : repairState === 1 ? 0.12 : repairState === 2 ? 0.25 : 0.2;
+
+    if (this.trailTimer < interval) return;
+    this.trailTimer = 0;
+
+    const pos = this.memo9.position;
+    const dist = pos.distanceTo(this.lastTrailPos);
+    if (dist < 0.05) return;
+
+    this.lastTrailPos.copy(pos);
+    const angle = this.memo9.rotation.y;
+
+    if (repairState === 0) {
+      // Wide body drag mark
+      this.spawnTrailMark(pos.x, pos.z, angle, 0.6, 0.9, 0.2);
+    } else if (repairState === 1) {
+      // Body drag + arm scratch marks
+      this.spawnTrailMark(pos.x, pos.z, angle, 0.5, 0.7, 0.18);
+      // Arm scratch offset to one side
+      const armX = pos.x + Math.cos(angle) * 0.3;
+      const armZ = pos.z - Math.sin(angle) * 0.3;
+      this.spawnTrailMark(armX, armZ, angle + 0.3, 0.15, 0.4, 0.25);
+    } else if (repairState === 2) {
+      // Single footprint (left leg only) on alternating steps
+      const stepping = Math.sin(this.walkCycle) > 0.3;
+      if (stepping) {
+        const footX = pos.x - Math.cos(angle) * 0.15;
+        const footZ = pos.z + Math.sin(angle) * 0.15;
+        this.spawnTrailMark(footX, footZ, angle, 0.12, 0.2, 0.3);
+      }
+      // Drag mark from missing leg side
+      const dragX = pos.x + Math.cos(angle) * 0.2;
+      const dragZ = pos.z - Math.sin(angle) * 0.2;
+      this.spawnTrailMark(dragX, dragZ, angle, 0.08, 0.35, 0.12);
+    } else {
+      // Dual footprints
+      const leftStep = Math.sin(this.walkCycle) > 0.5;
+      const rightStep = Math.sin(this.walkCycle) < -0.5;
+      if (leftStep) {
+        const fx = pos.x - Math.cos(angle) * 0.15;
+        const fz = pos.z + Math.sin(angle) * 0.15;
+        this.spawnTrailMark(fx, fz, angle, 0.1, 0.18, 0.35);
+      }
+      if (rightStep) {
+        const fx = pos.x + Math.cos(angle) * 0.15;
+        const fz = pos.z - Math.sin(angle) * 0.15;
+        this.spawnTrailMark(fx, fz, angle, 0.1, 0.18, 0.35);
+      }
     }
-    const rightKnee = this.kneePivots.get('right_leg');
-    if (rightKnee) {
-      rightKnee.rotation.x = THREE.MathUtils.lerp(rightKnee.rotation.x, rightKneeBend, limbLerp);
+  }
+
+  private spawnTrailMark(x: number, z: number, angle: number, width: number, length: number, opacity: number) {
+    let mark: THREE.Mesh;
+
+    if (this.trailPool.length > 0) {
+      mark = this.trailPool.pop()!;
+      mark.visible = true;
+    } else {
+      const geo = new THREE.PlaneGeometry(1, 1);
+      const mat = new THREE.MeshStandardMaterial({
+        color: '#8B9DAF',
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        roughness: 1,
+        metalness: 0,
+      });
+      mark = new THREE.Mesh(geo, mat);
+      mark.rotation.x = -Math.PI / 2;
+      this.scene.add(mark);
     }
 
-    // Arm pivots
-    const leftArm = this.limbPivots.get('left_arm');
-    if (leftArm) {
-      leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, leftArmSwing, limbLerp);
+    mark.position.set(x, 0.005, z);
+    mark.rotation.y = angle;
+    mark.rotation.z = 0;
+    mark.scale.set(width, length, 1);
+    (mark.material as THREE.MeshStandardMaterial).opacity = opacity;
+
+    this.trailMarks.push(mark);
+
+    // Recycle oldest marks
+    while (this.trailMarks.length > this.MAX_TRAILS) {
+      const old = this.trailMarks.shift()!;
+      old.visible = false;
+      this.trailPool.push(old);
     }
-    const rightArm = this.limbPivots.get('right_arm');
-    if (rightArm) {
-      rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, rightArmSwing, limbLerp);
+
+    // Fade older marks
+    const count = this.trailMarks.length;
+    for (let i = 0; i < count; i++) {
+      const age = 1 - i / count;
+      const m = this.trailMarks[i];
+      const mat = m.material as THREE.MeshStandardMaterial;
+      const baseOpacity = parseFloat(mat.userData.baseOpacity ?? mat.opacity);
+      if (!mat.userData.baseOpacity) mat.userData.baseOpacity = mat.opacity;
+      mat.opacity = baseOpacity * (1 - age * 0.7);
     }
   }
 
