@@ -6,7 +6,8 @@ import { usePlayerStore } from '../stores/usePlayerStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useInputStore } from '../systems/InputManager';
 
-const INTERACTION_RADIUS = 2.0;
+const INTERACTION_RADIUS = 2.5;
+const CRATE_POS = new THREE.Vector3(0, 0, 21);
 
 interface CameraConfig {
   height: number;
@@ -525,8 +526,33 @@ export class GameScene {
       usePlayerStore.getState().setIsMoving(false);
     }
 
+    // --- Proximity prompts ---
+    const partsCollected = usePlayerStore.getState().partsCollected;
+    let prompt: string | null = null;
+
+    // Check nearby parts
+    for (const part of LEVEL1_PARTS) {
+      if (partsCollected.includes(part.id)) continue;
+      const partPos = new THREE.Vector3(...part.position);
+      if (this.memo9.position.distanceTo(partPos) < INTERACTION_RADIUS) {
+        prompt = `[E] ${part.promptKey}`;
+        break;
+      }
+    }
+
+    // Check crate/repair station
+    const allCollected = partsCollected.length >= LEVEL1_PARTS.length;
+    const nearCrate = this.memo9.position.distanceTo(CRATE_POS) < INTERACTION_RADIUS;
+    if (nearCrate && allCollected) {
+      prompt = '[E] Recharge';
+    } else if (nearCrate && !allCollected) {
+      prompt = `Find all parts first (${partsCollected.length}/${LEVEL1_PARTS.length})`;
+    }
+
+    useUIStore.getState().setInteractionPrompt(prompt);
+
+    // --- Interact action ---
     if (interact) {
-      const partsCollected = usePlayerStore.getState().partsCollected;
       for (const part of LEVEL1_PARTS) {
         if (partsCollected.includes(part.id)) continue;
         const partPos = new THREE.Vector3(...part.position);
@@ -539,6 +565,15 @@ export class GameScene {
           useInputStore.getState().setInteract(false);
           break;
         }
+      }
+
+      // Crate recharge interaction
+      if (nearCrate && allCollected) {
+        useUIStore.getState().showMessage(
+          'MEMO-9 fully recharged!\nReady for Level 2...',
+          6000,
+        );
+        useInputStore.getState().setInteract(false);
       }
     }
   }
@@ -623,7 +658,7 @@ export class GameScene {
         animRotZ = Math.sin(t) * 0.08;
         // One leg hobbling with knee bend
         leftHipSwing = Math.sin(t) * 0.4;
-        leftKneeBend = Math.max(0, -Math.sin(t)) * 0.6; // bend when leg swings back
+        leftKneeBend = -Math.max(0, -Math.sin(t)) * 0.6; // bend when leg swings back
         rightArmSwing = -Math.sin(t) * 0.3;
         leftArmSwing = Math.sin(t) * 0.2;
       } else {
@@ -642,10 +677,9 @@ export class GameScene {
         leftHipSwing = Math.sin(t) * 0.5;
         rightHipSwing = -Math.sin(t) * 0.5;
 
-        // Knee bend: bends when leg passes under body (mid-swing)
-        // Knee only bends backward (positive rotation), never hyperextends
-        leftKneeBend = Math.max(0, Math.sin(t - 0.5)) * 0.7;
-        rightKneeBend = Math.max(0, Math.sin(t + Math.PI - 0.5)) * 0.7;
+        // Knee bend: negative rotation bends knee forward (model is flipped 180°)
+        leftKneeBend = -Math.max(0, Math.sin(t - 0.5)) * 0.7;
+        rightKneeBend = -Math.max(0, Math.sin(t + Math.PI - 0.5)) * 0.7;
 
         // Arms counter-swing
         leftArmSwing = -Math.sin(t) * 0.35;
