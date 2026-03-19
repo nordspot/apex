@@ -205,8 +205,9 @@ export class GameScene {
     const bottomY = fullBox.min.y;
 
     // Classification thresholds (world space)
-    const hipY = bottomY + fullSize.y * 0.45;
-    const footY = bottomY + fullSize.y * 0.08;
+    // Hip line raised to 0.55 to capture full thigh meshes (upper thigh centers sit high)
+    const hipY = bottomY + fullSize.y * 0.55;
+    const footY = bottomY + fullSize.y * 0.05;
     const armThresholdX = fullSize.x * 0.12;
 
     const regions: Record<string, THREE.Mesh[]> = {
