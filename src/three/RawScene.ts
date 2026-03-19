@@ -398,14 +398,24 @@ export class GameScene {
         group.add(clone);
       }
 
-      group.position.set(part.position[0], -0.05, part.position[2]);
+      // Compute local bounding box of all clones, then shift down so bottom = 0
+      const localBox = new THREE.Box3();
+      for (const child of group.children) {
+        localBox.expandByObject(child);
+      }
+      const bottomY = localBox.min.y;
+      for (const child of group.children) {
+        child.position.y -= bottomY; // shift so bottom of group sits at y=0
+      }
 
       if (part.type === 'arm') {
-        // Arm lying flat on snow, slightly tilted as if it fell
-        group.rotation.set(-0.15, 0.3, Math.PI / 2 + 0.05);
+        // Arm lying on its side in the snow, partially buried
+        group.rotation.set(0, 0.3, Math.PI / 2);
+        group.position.set(part.position[0], -0.08, part.position[2]);
       } else {
         // Leg lying flat on snow, partially buried
-        group.rotation.set(Math.PI / 2 + 0.05, 0.2, 0.1);
+        group.rotation.set(Math.PI / 2, 0.2, 0.1);
+        group.position.set(part.position[0], -0.08, part.position[2]);
       }
 
       this.scene.add(group);
