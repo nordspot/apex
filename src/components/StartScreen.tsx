@@ -21,34 +21,16 @@ export function StartScreen() {
         padding: 24,
       }}
     >
-      {/* Animated Logo */}
-      <video
-        src="https://faszination-technik.ch/app/themes/project/resources/media/logos/logo_animated.webm"
-        autoPlay
-        loop
-        muted
-        playsInline
+      {/* Full Faszination Technik logo */}
+      <img
+        src="https://faszination-technik.ch/app/uploads/2025/08/logo_adjusted-1.svg"
+        alt="Faszination Technik"
         style={{
-          width: 120,
-          height: 120,
-          marginBottom: 12,
-          filter: 'drop-shadow(0 0 20px rgba(0,100,255,0.3))',
+          height: 60,
+          marginBottom: 16,
+          filter: 'drop-shadow(0 0 20px rgba(0,100,255,0.3)) brightness(1.8)',
         }}
       />
-
-      {/* Org name */}
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          letterSpacing: 3,
-          textTransform: 'uppercase',
-          color: BRAND.textMuted,
-          marginBottom: 8,
-        }}
-      >
-        Faszination Technik
-      </div>
 
       {/* Title */}
       <h1
@@ -111,20 +93,12 @@ export function StartScreen() {
         style={{
           position: 'absolute',
           bottom: 20,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 8,
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.3)',
+          letterSpacing: 2,
         }}
       >
-        <img
-          src="https://faszination-technik.ch/app/uploads/2025/08/logo_adjusted-1.svg"
-          alt="Faszination Technik"
-          style={{ height: 28, opacity: 0.5 }}
-        />
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
-          Swiss MEM
-        </span>
+        Swiss MEM
       </div>
     </div>
   );
