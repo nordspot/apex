@@ -73,6 +73,7 @@ export class GameScene {
   // Animation state
   private walkCycle = 0;
   private robotBaseY = 0;
+  private robotScale = 1;
   private targetPoseY = 0;
   private targetPoseRotX = 0;
   private targetPoseRotZ = 0;
@@ -158,6 +159,7 @@ export class GameScene {
 
       const targetHeight = 1.8;
       const scaleFactor = targetHeight / size.y;
+      this.robotScale = scaleFactor;
       model.scale.setScalar(scaleFactor);
 
       this.robotBaseY = -box.min.y * scaleFactor;
@@ -220,8 +222,9 @@ export class GameScene {
       console.log(`  "${mesh.name}" center=(${localCenter.x.toFixed(3)}, ${localCenter.y.toFixed(3)}, ${localCenter.z.toFixed(3)}) size=(${sz.x.toFixed(3)}, ${sz.y.toFixed(3)}, ${sz.z.toFixed(3)})`);
     }
 
-    // --- Remove antenna/sphere: meshes with center Y > 2.3 in model-local space ---
-    const antennaMinY = 2.3;
+    // --- Remove antenna/sphere: meshes with center Y > 1.9 in model-local space ---
+    // Catches: mesh[11] Y=2.008, mesh[14] Y=2.035, mesh[47] Y=3.017, mesh[92] Y=2.625
+    const antennaMinY = 1.9;
     const meshesToRemove: THREE.Mesh[] = [];
     for (const { mesh, localCenter } of allMeshes) {
       if (localCenter.y > antennaMinY) {
@@ -236,17 +239,19 @@ export class GameScene {
     }
 
     // --- Classification in model-local coordinates ---
-    // Hip line: Y = -1.0 (meshes below this are legs)
-    // Arm threshold: |X| > 0.45 AND Y > -0.5 (arms are offset from center and above hip)
-    // Model -X side = left arm (in model space) → which is the ROBOT's LEFT (world +X after PI flip)
-    // Model +X side = right arm (in model space) → which is the ROBOT's RIGHT (world -X after PI flip)
-    // But LEVEL1_PARTS uses robot perspective names, and the model is viewed from FRONT
-    // Model -X = character's RIGHT side, Model +X = character's LEFT side
-    // After PI rotation: model -X → world +X = robot's RIGHT, model +X → world -X = robot's LEFT
-    const HIP_Y = -1.0;
-    const ARM_MIN_X = 0.45;
-    const ARM_MIN_Y = -0.5;
-    const LEG_MIN_X = 0.1; // legs must be somewhat offset from dead center
+    // Robot model faces -Z. Standard convention: model -X = character's LEFT, model +X = character's RIGHT.
+    // After model.rotation.y = PI, the character faces +Z (toward camera).
+    // LEVEL1_PARTS ids use character perspective: 'right_arm', 'left_leg', 'right_leg'
+    //
+    // From GLB analysis (113 meshes):
+    //   Arms: |X| > 0.45, Y > -0.6 (includes hands that dip to Y≈-0.57)
+    //   Legs: Y < 0.0 AND |X| > 0.15 AND NOT arm (arms take priority)
+    //   Antenna: Y > 2.0
+    //   Body: everything else (torso, head, shoulder connectors)
+    const ARM_MIN_X = 0.43;  // arms at |X| >= 0.43 (hands at 0.432+)
+    const ARM_MIN_Y = -0.6;  // hands dip to Y≈-0.57
+    const HIP_Y = 0.0;       // everything below Y=0 with X offset = leg
+    const LEG_MIN_X = 0.15;  // exclude centered torso (mesh[15] at |X|=0.026)
 
     const regions: Record<string, THREE.Mesh[]> = {
       right_arm: [], left_arm: [], left_leg: [], right_leg: [],
@@ -256,15 +261,15 @@ export class GameScene {
       const absX = Math.abs(localCenter.x);
 
       if (absX > ARM_MIN_X && localCenter.y > ARM_MIN_Y) {
-        // Arm: far from center and above hip area
-        // Model -X = robot's right, Model +X = robot's left
+        // Arm: far from center horizontally (arms checked FIRST, before legs)
+        // Model -X = character's LEFT, Model +X = character's RIGHT
         if (localCenter.x < 0) {
-          regions.left_arm.push(mesh); // model -X → robot's left (after PI flip, world +X)
+          regions.left_arm.push(mesh);
         } else {
-          regions.right_arm.push(mesh); // model +X → robot's right (after PI flip, world -X)
+          regions.right_arm.push(mesh);
         }
       } else if (localCenter.y < HIP_Y && absX > LEG_MIN_X) {
-        // Leg: below hip and offset from center
+        // Leg: below hip line and offset from center
         if (localCenter.x < 0) {
           regions.left_leg.push(mesh);
         } else {
@@ -425,42 +430,42 @@ export class GameScene {
       }
       this.hiddenLimbMeshes.set(part.id, meshes);
 
-      // Create scattered clone on the ground (using world-space positions)
+      // Create scattered clone on the ground
+      // Use geometry bounding boxes (model-local coords) for positioning,
+      // then apply robotScale so clones match the in-game robot size
       const group = new THREE.Group();
-      const partWorldBox = new THREE.Box3();
-      for (const mesh of meshes) partWorldBox.expandByObject(mesh);
-      const partWorldCenter = partWorldBox.getCenter(new THREE.Vector3());
+
+      // Compute combined bounding box in model-local space
+      const combinedLocalBox = new THREE.Box3();
+      for (const mesh of meshes) {
+        mesh.geometry.computeBoundingBox();
+        combinedLocalBox.union(mesh.geometry.boundingBox!);
+      }
+      const combinedCenter = combinedLocalBox.getCenter(new THREE.Vector3());
 
       for (const mesh of meshes) {
         const clone = mesh.clone();
         clone.visible = true;
         clone.castShadow = true;
         clone.receiveShadow = true;
-        // Position clone relative to part center
-        const meshWorldPos = new THREE.Vector3();
-        mesh.getWorldPosition(meshWorldPos);
-        clone.position.copy(meshWorldPos.sub(partWorldCenter));
-        clone.rotation.set(0, 0, 0); // reset rotation for ground placement
+        // Position relative to combined center (model-local coords)
+        mesh.geometry.computeBoundingBox();
+        const meshCenter = mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
+        clone.position.copy(meshCenter.sub(combinedCenter));
+        clone.rotation.set(0, 0, 0);
         clone.scale.setScalar(1);
         group.add(clone);
       }
 
-      // Compute local bounding box of all clones, then shift so center is at origin
-      const localBox = new THREE.Box3();
-      for (const child of group.children) {
-        localBox.expandByObject(child);
-      }
-      const localCenter = localBox.getCenter(new THREE.Vector3());
-      for (const child of group.children) {
-        child.position.sub(localCenter);
-      }
+      // Apply robot's scale so clones match in-game size
+      group.scale.setScalar(this.robotScale);
 
       if (part.type === 'arm') {
-        // Arm lying on its side in the snow, partially buried
+        // Arm lying on its side in the snow
         group.rotation.set(Math.PI / 2, 0.3, 0.1);
         group.position.set(part.position[0], 0.05, part.position[2]);
       } else {
-        // Leg lying flat on snow, partially buried
+        // Leg lying flat on snow
         group.rotation.set(Math.PI / 2, 0.2, 0.1);
         group.position.set(part.position[0], 0.05, part.position[2]);
       }

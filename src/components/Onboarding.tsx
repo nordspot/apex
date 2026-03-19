@@ -9,7 +9,7 @@ const STEPS = [
     text: 'Ein Wartungsroboter, der in den Schweizer Alpen abgestürzt ist.',
   },
   {
-    icon: '🔧',
+    icon: '🦾',
     title: 'Finde deine Teile',
     text: 'Deine Gliedmassen sind im Schnee verstreut. Sammle sie ein, um dich zu reparieren.',
   },
