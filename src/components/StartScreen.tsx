@@ -21,7 +21,22 @@ export function StartScreen() {
         padding: 24,
       }}
     >
-      {/* Logo / Org name */}
+      {/* Animated Logo */}
+      <video
+        src="https://faszination-technik.ch/app/themes/project/resources/media/logos/logo_animated.webm"
+        autoPlay
+        loop
+        muted
+        playsInline
+        style={{
+          width: 120,
+          height: 120,
+          marginBottom: 12,
+          filter: 'drop-shadow(0 0 20px rgba(0,100,255,0.3))',
+        }}
+      />
+
+      {/* Org name */}
       <div
         style={{
           fontSize: 13,
@@ -96,11 +111,20 @@ export function StartScreen() {
         style={{
           position: 'absolute',
           bottom: 20,
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.3)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 8,
         }}
       >
-        Ein Projekt von Faszination Technik &middot; Swiss MEM
+        <img
+          src="https://faszination-technik.ch/app/uploads/2025/08/logo_adjusted-1.svg"
+          alt="Faszination Technik"
+          style={{ height: 28, opacity: 0.5 }}
+        />
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+          Swiss MEM
+        </span>
       </div>
     </div>
   );
