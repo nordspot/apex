@@ -166,15 +166,19 @@ export class GameScene {
     });
   }
 
+  // Elbow pivots (child of shoulder pivot, like knee is child of hip)
+  elbowPivots: Map<string, THREE.Group> = new Map();
+
   private setupLimbs(robotModel: THREE.Group, scaleFactor: number) {
     // Collect all meshes with their geometry bounding box centers
-    const allMeshes: { mesh: THREE.Mesh; center: THREE.Vector3 }[] = [];
+    const allMeshes: { mesh: THREE.Mesh; center: THREE.Vector3; box: THREE.Box3 }[] = [];
     robotModel.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         mesh.geometry.computeBoundingBox();
-        const center = mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
-        allMeshes.push({ mesh, center });
+        const bb = mesh.geometry.boundingBox!;
+        const center = bb.getCenter(new THREE.Vector3());
+        allMeshes.push({ mesh, center, box: bb.clone() });
       }
     });
 
@@ -182,20 +186,27 @@ export class GameScene {
 
     // Overall robot bounds
     const fullBox = new THREE.Box3();
-    for (const { mesh } of allMeshes) {
-      const bb = mesh.geometry.boundingBox!;
-      fullBox.expandByPoint(bb.min);
-      fullBox.expandByPoint(bb.max);
+    for (const { box } of allMeshes) {
+      fullBox.expandByPoint(box.min);
+      fullBox.expandByPoint(box.max);
     }
     const fullCenter = fullBox.getCenter(new THREE.Vector3());
     const fullSize = fullBox.getSize(new THREE.Vector3());
 
     const midX = fullCenter.x;
-    const midY = fullCenter.y;
-    const legTopY = midY - fullSize.y * 0.05;
-    const armOuterX = fullSize.x * 0.18;
+    const bottomY = fullBox.min.y;
 
-    // Classify into regions (arms + legs as whole regions first)
+    // Key measurements for classification:
+    // - Hip line: ~45% up from bottom (where legs meet torso)
+    // - Arm threshold: meshes beyond 15% of full width from center are arm candidates
+    // - Foot line: bottom 10% of height
+    const hipY = bottomY + fullSize.y * 0.45;
+    const footY = bottomY + fullSize.y * 0.10;
+    const armThresholdX = fullSize.x * 0.15;
+
+    // Step 1: Classify by X distance from center (arms vs body/legs)
+    // Arms are ANY mesh far from center X, regardless of Y
+    // Legs are meshes below hip line AND close to center X
     const regions: Record<string, THREE.Mesh[]> = {
       right_arm: [],
       left_arm: [],
@@ -204,18 +215,29 @@ export class GameScene {
     };
 
     for (const { mesh, center } of allMeshes) {
-      if (center.x > midX + armOuterX && center.y > midY) {
-        regions.right_arm.push(mesh);
-      } else if (center.x < midX - armOuterX && center.y > midY) {
-        regions.left_arm.push(mesh);
-      } else if (center.x < midX && center.y < legTopY) {
-        regions.left_leg.push(mesh);
-      } else if (center.x >= midX && center.y < legTopY) {
-        regions.right_leg.push(mesh);
+      const distFromCenter = Math.abs(center.x - midX);
+
+      if (distFromCenter > armThresholdX && center.y > footY) {
+        // Far from center and above feet = arm
+        if (center.x > midX) {
+          regions.right_arm.push(mesh);
+        } else {
+          regions.left_arm.push(mesh);
+        }
+      } else if (center.y < hipY) {
+        // Below hip line and near center = leg
+        if (center.x < midX) {
+          regions.left_leg.push(mesh);
+        } else {
+          regions.right_leg.push(mesh);
+        }
       }
+      // else: torso/head — not assigned to any limb
     }
 
-    // --- Create arm pivots (single pivot at shoulder) ---
+    console.log(`[APEX] Classification: LA=${regions.left_arm.length} RA=${regions.right_arm.length} LL=${regions.left_leg.length} RL=${regions.right_leg.length} total=${allMeshes.length}`);
+
+    // --- Create arm pivots with elbow sub-pivots ---
     for (const armId of ['left_arm', 'right_arm']) {
       const meshes = regions[armId];
       if (meshes.length === 0) continue;
@@ -223,26 +245,62 @@ export class GameScene {
       const limbBox = new THREE.Box3();
       for (const mesh of meshes) limbBox.union(mesh.geometry.boundingBox!);
 
-      // Shoulder pivot: inner edge x, slightly below top y (where the joint actually is)
-      const armHeight = limbBox.max.y - limbBox.min.y;
-      const pivotPoint = new THREE.Vector3(
-        armId === 'left_arm' ? limbBox.max.x : limbBox.min.x,
-        limbBox.max.y - armHeight * 0.08, // slightly below top for natural rotation
+      // Shoulder pivot at top-inner corner of arm bounding box
+      const shoulderPoint = new THREE.Vector3(
+        armId === 'left_arm' ? limbBox.max.x : limbBox.min.x,  // inner edge
+        limbBox.max.y,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
 
-      const pivot = new THREE.Group();
-      pivot.position.copy(pivotPoint);
+      // Split upper/lower arm at Y midpoint for elbow
+      const elbowSplitY = (limbBox.min.y + limbBox.max.y) / 2;
+
+      const upperMeshes: THREE.Mesh[] = [];
+      const lowerMeshes: THREE.Mesh[] = [];
+      for (const { mesh: m, center: c } of allMeshes) {
+        if (!meshes.includes(m)) continue;
+        if (c.y >= elbowSplitY) {
+          upperMeshes.push(m);
+        } else {
+          lowerMeshes.push(m);
+        }
+      }
+
+      // Create shoulder pivot
+      const shoulderPivot = new THREE.Group();
+      shoulderPivot.position.copy(shoulderPoint);
 
       const parent = meshes[0].parent;
-      if (parent) parent.add(pivot);
+      if (parent) parent.add(shoulderPivot);
 
-      for (const mesh of meshes) {
+      // Reparent upper arm into shoulder pivot
+      for (const mesh of upperMeshes) {
         mesh.removeFromParent();
-        mesh.position.sub(pivotPoint);
-        pivot.add(mesh);
+        mesh.position.sub(shoulderPoint);
+        shoulderPivot.add(mesh);
       }
-      this.limbPivots.set(armId, pivot);
+
+      // Elbow pivot as child of shoulder pivot
+      const elbowPoint = new THREE.Vector3(
+        (limbBox.min.x + limbBox.max.x) / 2,
+        elbowSplitY,
+        (limbBox.min.z + limbBox.max.z) / 2,
+      );
+      const elbowRelative = elbowPoint.clone().sub(shoulderPoint);
+
+      const elbowPivot = new THREE.Group();
+      elbowPivot.position.copy(elbowRelative);
+      shoulderPivot.add(elbowPivot);
+
+      // Reparent lower arm (forearm + hand) into elbow pivot
+      for (const mesh of lowerMeshes) {
+        mesh.removeFromParent();
+        mesh.position.sub(elbowPoint);
+        elbowPivot.add(mesh);
+      }
+
+      this.limbPivots.set(armId, shoulderPivot);
+      this.elbowPivots.set(armId, elbowPivot);
     }
 
     // --- Create leg pivots with knee sub-pivots ---
@@ -250,25 +308,22 @@ export class GameScene {
       const meshes = regions[legId];
       if (meshes.length === 0) continue;
 
-      // Compute full leg bounding box
       const limbBox = new THREE.Box3();
       for (const mesh of meshes) limbBox.union(mesh.geometry.boundingBox!);
 
-      // Split upper/lower at the Y midpoint of the leg
       const kneeSplitY = (limbBox.min.y + limbBox.max.y) / 2;
 
       const upperMeshes: THREE.Mesh[] = [];
       const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh, center } of allMeshes) {
-        if (!meshes.includes(mesh)) continue;
-        if (center.y >= kneeSplitY) {
-          upperMeshes.push(mesh);
+      for (const { mesh: m, center: c } of allMeshes) {
+        if (!meshes.includes(m)) continue;
+        if (c.y >= kneeSplitY) {
+          upperMeshes.push(m);
         } else {
-          lowerMeshes.push(mesh);
+          lowerMeshes.push(m);
         }
       }
 
-      // Hip pivot at top of leg
       const hipPoint = new THREE.Vector3(
         (limbBox.min.x + limbBox.max.x) / 2,
         limbBox.max.y,
@@ -281,27 +336,23 @@ export class GameScene {
       const parent = meshes[0].parent;
       if (parent) parent.add(hipPivot);
 
-      // Reparent upper leg meshes into hip pivot
       for (const mesh of upperMeshes) {
         mesh.removeFromParent();
         mesh.position.sub(hipPoint);
         hipPivot.add(mesh);
       }
 
-      // Knee pivot as child of hip pivot
       const kneePoint = new THREE.Vector3(
         (limbBox.min.x + limbBox.max.x) / 2,
         kneeSplitY,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
-      // Knee position relative to hip pivot
       const kneeRelative = kneePoint.clone().sub(hipPoint);
 
       const kneePivot = new THREE.Group();
       kneePivot.position.copy(kneeRelative);
       hipPivot.add(kneePivot);
 
-      // Reparent lower leg meshes into knee pivot
       for (const mesh of lowerMeshes) {
         mesh.removeFromParent();
         mesh.position.sub(kneePoint);
@@ -659,151 +710,178 @@ export class GameScene {
     let animY = 0, animRotX = 0, animRotZ = 0;
     let leftHip = 0, rightHip = 0;
     let leftKnee = 0, rightKnee = 0;
-    let leftArm = 0, rightArm = 0;
+    let leftShoulder = 0, rightShoulder = 0;
+    let leftElbow = 0, rightElbow = 0;
+
+    // Easing helper: softens harsh sine peaks
+    const ease = (x: number) => x * x * (3 - 2 * Math.abs(x)) * Math.sign(x);
 
     // ========== STATE 0: BROKEN — face down, left arm only ==========
     if (repairState === 0) {
-      // Left arm is always attached — it tries to drag the body
-      const breathe = Math.sin(t * 0.6) * 0.01;
       if (isMoving) {
-        // Left arm does a desperate one-arm crawl
-        const crawl = Math.sin(t);
-        leftArm = crawl * 0.7;               // reach forward, pull back
+        // Desperate one-arm army crawl with left arm
+        // 3-phase cycle: REACH (arm extends) → PLANT (elbow locks) → PULL (drag body)
+        const phase = Math.sin(t);
+        const reachPhase = Math.max(0, -phase);   // arm extending forward
+        const pullPhase = Math.max(0, phase);      // arm pulling body
 
-        // Body rocks with arm effort
-        const pull = Math.max(0, crawl);
-        animY = pull * 0.03;                  // tiny lift during pull
-        animRotX = crawl * 0.1;              // rock with arm
-        animRotZ = Math.sin(t * 0.7) * 0.12 + crawl * 0.06; // body twists toward pulling arm
+        // Shoulder swings forward then back
+        leftShoulder = phase * 0.8;
+        // Elbow: bends during reach (arm curls to plant), straightens during pull
+        leftElbow = -reachPhase * 0.6 - 0.15;     // negative = bend forward
+
+        // Body follows arm pull with slight delay
+        animY = pullPhase * 0.035;
+        animRotX = ease(phase) * 0.08;
+        // Body twists toward arm side during pull
+        animRotZ = phase * 0.1 + Math.sin(t * 0.6) * 0.06;
+
+        // Secondary: body drag shimmy
+        animY += Math.sin(t * 2.3) * 0.012;
       } else {
-        // Idle: left arm twitches, breathing
-        animY = breathe;
-        animRotZ = Math.sin(t * 0.5) * 0.04;
-        animRotX = Math.sin(t * 0.3) * 0.02;
-        leftArm = Math.sin(t * 0.4) * 0.06;  // slight idle movement
+        // Idle: weak arm twitches, labored breathing
+        const breathe = Math.sin(t * 0.5);
+        animY = breathe * 0.008;
+        animRotZ = Math.sin(t * 0.4) * 0.03;
+        leftShoulder = Math.sin(t * 0.3) * 0.05;
+        leftElbow = -0.2 + Math.sin(t * 0.4) * 0.04; // slightly bent, twitching
       }
     }
 
     // ========== STATE 1: TWO ARM CRAWL (right_arm collected) ==========
     else if (repairState === 1) {
       if (isMoving) {
-        // Both arms crawling in alternating rhythm
-        const reach = Math.sin(t);
+        // Alternating two-arm crawl: left plants while right reaches, then swap
+        const cycle = Math.sin(t);
 
-        // Arms alternate: when right reaches forward, left pulls back
-        rightArm = reach * 0.85;
-        leftArm = -reach * 0.85;             // opposite phase
+        // Arms in opposite phase
+        rightShoulder = cycle * 0.75;
+        leftShoulder = -cycle * 0.75;
 
-        // Body driven by whichever arm is pulling
-        const rightPull = Math.max(0, reach);
-        const leftPull = Math.max(0, -reach);
-        animY = Math.max(rightPull, leftPull) * 0.05; // lifts during either pull
+        // Elbows: bend during reach phase (negative cycle for right, positive for left)
+        // Lock straight during pull phase
+        const rightReach = Math.max(0, -cycle);
+        const leftReach = Math.max(0, cycle);
+        rightElbow = -rightReach * 0.55 - 0.1;
+        leftElbow = -leftReach * 0.55 - 0.1;
 
-        // Body rocks side-to-side following the pulling arm
-        animRotZ = reach * 0.14;             // lean toward pulling side
-        animRotX = Math.sin(t * 2) * 0.06;  // chest pump at double frequency
+        // Body: lifts during each pull, rocks side to side
+        const eitherPull = Math.abs(cycle);
+        animY = eitherPull * 0.04;
 
-        // Drag shimmy
-        animY += Math.sin(t * 2) * 0.02;
+        // Lateral rock: body shifts toward the pulling arm
+        animRotZ = cycle * 0.12;
+
+        // Forward/back pump synced to arm cycle
+        animRotX = Math.sin(t * 2) * 0.05;
+
+        // Secondary shimmy
+        animY += Math.sin(t * 2.1) * 0.015;
       } else {
-        // Idle: both arms resting, gentle breathing
-        animY = Math.sin(t * 0.5) * 0.008;
-        animRotZ = Math.sin(t * 0.6) * 0.025;
-        rightArm = Math.sin(t * 0.4) * 0.06 + 0.08;
-        leftArm = Math.sin(t * 0.4 + 1) * 0.06 + 0.08;
+        // Idle: arms resting, slight breathing
+        animY = Math.sin(t * 0.5) * 0.006;
+        animRotZ = Math.sin(t * 0.5) * 0.02;
+        rightShoulder = 0.1 + Math.sin(t * 0.35) * 0.04;
+        leftShoulder = 0.1 + Math.sin(t * 0.35 + 0.8) * 0.04;
+        rightElbow = -0.15;
+        leftElbow = -0.15;
       }
     }
 
-    // ========== STATE 2: HOBBLING (right_arm + left_leg) ==========
+    // ========== STATE 2: HOBBLING (both arms + left_leg) ==========
     else if (repairState === 2) {
       if (isMoving) {
-        // Asymmetric hobbling gait: left leg does all the work
-        // Missing right leg means body dips hard on right side each step
-
-        // Left leg stride
+        // Asymmetric hop/hobble: left leg does all work, missing right leg
         const stride = Math.sin(t);
-        leftHip = stride * 0.55;
+        const strideAbs = Math.abs(stride);
 
-        // Left knee bends during swing-through (when hip is moving forward)
-        // Negative X rotation = forward knee bend (model flipped)
-        leftKnee = -Math.max(0, Math.sin(t - 0.6)) * 0.8;
+        // Left leg: full stride with proper knee bend
+        leftHip = stride * 0.5;
+        // Knee bends during forward swing, straightens during back
+        leftKnee = -Math.max(0, Math.sin(t - 0.5)) * 0.75;
 
-        // Body dip: drops down when "stepping" on the missing leg side
-        // The missing leg phase is when left leg is forward (planted) = sin > 0
-        const dip = Math.max(0, stride);
-        const support = Math.max(0, -stride);
-        animY = -dip * 0.08 + support * 0.03;
+        // Body dips when weight transfers to missing-leg side
+        const dip = Math.max(0, stride);       // dip when left leg is forward (no right to catch)
+        const support = Math.max(0, -stride);  // lift when left leg is back (body supported)
+        animY = -dip * 0.07 + support * 0.025;
 
-        // Pronounced lateral lean: body tips toward missing leg
-        animRotZ = stride * 0.12 + 0.04;     // constant lean + oscillation
+        // Pronounced lateral lean toward missing leg
+        animRotZ = stride * 0.1 + 0.05;
 
-        // Forward lean compensation
-        animRotX = -0.04 + Math.sin(t * 2) * 0.02;
+        // Forward tilt with head bob
+        animRotX = -0.04 + Math.sin(t * 2) * 0.015;
 
-        // Arms for balance
-        rightArm = -stride * 0.4;     // counter-swing
-        leftArm = stride * 0.25;      // less swing (secondary)
+        // Arms for balance: wide swing
+        rightShoulder = -stride * 0.35;
+        leftShoulder = stride * 0.2;
+        // Elbows slightly bent for natural look
+        rightElbow = -0.2 - strideAbs * 0.1;
+        leftElbow = -0.15 - strideAbs * 0.08;
 
-        // Stagger: slight uneven timing feel
-        animY += Math.sin(t * 3) * 0.01;
+        // Uneven timing: hobble has a hitch
+        animY += Math.sin(t * 3) * 0.008;
       } else {
-        // Idle: standing on one leg, swaying
-        animY = Math.sin(t * 0.4) * 0.015;
-        animRotZ = 0.05 + Math.sin(t * 0.5) * 0.03;  // slight lean toward missing leg
-        leftHip = Math.sin(t * 0.3) * 0.04;
-        rightArm = Math.sin(t * 0.4) * 0.05;
+        // Idle: balancing on one leg
+        animY = Math.sin(t * 0.35) * 0.012;
+        animRotZ = 0.04 + Math.sin(t * 0.4) * 0.025;
+        leftHip = Math.sin(t * 0.25) * 0.03;
+        rightShoulder = Math.sin(t * 0.35) * 0.04;
+        rightElbow = -0.2;
+        leftElbow = -0.15;
       }
     }
 
     // ========== STATE 3: FULL WALK — proper bipedal gait ==========
     else {
       if (isMoving) {
-        // Professional walk cycle with proper phases:
-        // Left leg forward when sin(t) > 0, right when sin(t) < 0
-        // Contact → Down → Passing → Up → Contact
+        // Professional walk cycle:
+        // Contact → Loading → Mid-stance → Terminal → Pre-swing → Swing
 
-        // Hip swing: alternating stride
-        leftHip = Math.sin(t) * 0.45;
-        rightHip = -Math.sin(t) * 0.45;
+        // Hip swing with slight easing
+        leftHip = ease(Math.sin(t)) * 0.4;
+        rightHip = ease(-Math.sin(t)) * 0.4;
 
-        // Knee bending (negative X = forward bend, model flipped):
-        // Knee bends during swing phase (leg moving forward) peaking at mid-swing
-        // Also slight bend at contact for shock absorption
-        const leftSwing = Math.max(0, Math.sin(t - 0.3));
-        const rightSwing = Math.max(0, Math.sin(t + Math.PI - 0.3));
-        const leftContact = Math.max(0, Math.sin(t + 0.5)) * 0.15;
-        const rightContact = Math.max(0, Math.sin(t + Math.PI + 0.5)) * 0.15;
-        leftKnee = -(leftSwing * 0.65 + leftContact);
-        rightKnee = -(rightSwing * 0.65 + rightContact);
+        // Knee bend: peak during swing phase, slight cushion at contact
+        const lSwing = Math.max(0, Math.sin(t - 0.3));
+        const rSwing = Math.max(0, Math.sin(t + Math.PI - 0.3));
+        const lContact = Math.max(0, Math.sin(t + 0.6)) * 0.12;
+        const rContact = Math.max(0, Math.sin(t + Math.PI + 0.6)) * 0.12;
+        leftKnee = -(lSwing * 0.6 + lContact);
+        rightKnee = -(rSwing * 0.6 + rContact);
 
-        // Vertical bounce: double-frequency bob (up at mid-stance of each leg)
-        animY = Math.abs(Math.sin(t)) * 0.04;
+        // Vertical bounce: up at mid-stance of each leg
+        animY = Math.abs(Math.sin(t)) * 0.035;
 
-        // Lateral weight shift: body sways over the planted foot
-        animRotZ = Math.sin(t) * 0.03;
+        // Lateral weight shift over planted foot
+        animRotZ = Math.sin(t) * 0.025;
 
-        // Slight forward lean when walking
-        animRotX = -0.04;
+        // Slight forward lean
+        animRotX = -0.035 + Math.sin(t * 2) * 0.008;
 
-        // Arms counter-swing (opposite to legs, slight delay)
-        leftArm = -Math.sin(t + 0.15) * 0.35;
-        rightArm = Math.sin(t + 0.15) * 0.35;
+        // Arms counter-swing with slight phase delay
+        const armT = t + 0.12;
+        leftShoulder = -ease(Math.sin(armT)) * 0.3;
+        rightShoulder = ease(Math.sin(armT)) * 0.3;
 
-        // Spine twist: subtle upper body counter-rotation
-        animRotX += Math.sin(t * 2) * 0.01;
+        // Natural elbow bend: more bent during back-swing
+        const lArmBack = Math.max(0, Math.sin(armT));
+        const rArmBack = Math.max(0, -Math.sin(armT));
+        leftElbow = -0.12 - lArmBack * 0.2;
+        rightElbow = -0.12 - rArmBack * 0.2;
       } else {
-        // Idle: subtle weight shift, breathing
-        const breathe = Math.sin(t * 0.6);
-        animY = breathe * 0.008;
-        animRotZ = Math.sin(t * 0.35) * 0.012;
+        // Idle: weight shift, breathing, natural arm hang
+        const breathe = Math.sin(t * 0.5);
+        animY = breathe * 0.006;
+        animRotZ = Math.sin(t * 0.3) * 0.01;
 
-        // Subtle idle sway in legs
-        leftHip = Math.sin(t * 0.25) * 0.02;
-        rightHip = -Math.sin(t * 0.25) * 0.02;
+        leftHip = Math.sin(t * 0.2) * 0.015;
+        rightHip = -Math.sin(t * 0.2) * 0.015;
 
-        // Arms rest with gentle sway
-        leftArm = Math.sin(t * 0.3) * 0.03;
-        rightArm = -Math.sin(t * 0.3) * 0.03;
+        // Arms hang naturally with slight sway
+        leftShoulder = Math.sin(t * 0.25) * 0.02;
+        rightShoulder = -Math.sin(t * 0.25) * 0.02;
+        leftElbow = -0.08 + Math.sin(t * 0.3) * 0.02;
+        rightElbow = -0.08 - Math.sin(t * 0.3) * 0.02;
       }
     }
 
@@ -833,11 +911,18 @@ export class GameScene {
     const rightKneePivot = this.kneePivots.get('right_leg');
     if (rightKneePivot) rightKneePivot.rotation.x = THREE.MathUtils.lerp(rightKneePivot.rotation.x, rightKnee, limbLerp);
 
-    const leftArmPivot = this.limbPivots.get('left_arm');
-    if (leftArmPivot) leftArmPivot.rotation.x = THREE.MathUtils.lerp(leftArmPivot.rotation.x, leftArm, limbLerp);
+    // Shoulder + elbow pivots
+    const leftShoulderPivot = this.limbPivots.get('left_arm');
+    if (leftShoulderPivot) leftShoulderPivot.rotation.x = THREE.MathUtils.lerp(leftShoulderPivot.rotation.x, leftShoulder, limbLerp);
 
-    const rightArmPivot = this.limbPivots.get('right_arm');
-    if (rightArmPivot) rightArmPivot.rotation.x = THREE.MathUtils.lerp(rightArmPivot.rotation.x, rightArm, limbLerp);
+    const rightShoulderPivot = this.limbPivots.get('right_arm');
+    if (rightShoulderPivot) rightShoulderPivot.rotation.x = THREE.MathUtils.lerp(rightShoulderPivot.rotation.x, rightShoulder, limbLerp);
+
+    const leftElbowPivot = this.elbowPivots.get('left_arm');
+    if (leftElbowPivot) leftElbowPivot.rotation.x = THREE.MathUtils.lerp(leftElbowPivot.rotation.x, leftElbow, limbLerp);
+
+    const rightElbowPivot = this.elbowPivots.get('right_arm');
+    if (rightElbowPivot) rightElbowPivot.rotation.x = THREE.MathUtils.lerp(rightElbowPivot.rotation.x, rightElbow, limbLerp);
 
     // ========== SNOW DEFORMATION ==========
     this.deformSnow(isMoving, repairState);
