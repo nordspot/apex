@@ -205,9 +205,7 @@ export class GameScene {
     const bottomY = fullBox.min.y;
 
     // Classification thresholds (world space)
-    // Hip line raised to 0.55 to capture full thigh meshes (upper thigh centers sit high)
     const hipY = bottomY + fullSize.y * 0.55;
-    const footY = bottomY + fullSize.y * 0.05;
     const armThresholdX = fullSize.x * 0.12;
 
     const regions: Record<string, THREE.Mesh[]> = {
@@ -220,12 +218,12 @@ export class GameScene {
       if (distFromCenter > armThresholdX && worldCenter.y > hipY * 0.8) {
         // Far from center = arm (model is flipped PI, so world X is inverted)
         if (worldCenter.x > midX) {
-          regions.left_arm.push(mesh);   // world +X = robot's left (model flipped)
+          regions.left_arm.push(mesh);
         } else {
           regions.right_arm.push(mesh);
         }
-      } else if (worldCenter.y < hipY && worldCenter.y > footY) {
-        // Below hip, above feet = leg
+      } else if (worldCenter.y < hipY && distFromCenter > armThresholdX * 0.3) {
+        // Below hip and not dead center = leg (includes feet)
         if (worldCenter.x > midX) {
           regions.left_leg.push(mesh);
         } else {
