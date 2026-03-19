@@ -16,12 +16,14 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   partsCollected: [],
   isMoving: false,
 
-  collectPart: (partId, grantState) =>
+  collectPart: (partId, _grantState) =>
     set((state) => {
       if (state.partsCollected.includes(partId)) return state;
+      const newParts = [...state.partsCollected, partId];
+      // Repair state = number of parts collected (sequential progression)
       return {
-        partsCollected: [...state.partsCollected, partId],
-        repairState: Math.max(state.repairState, grantState) as RepairState,
+        partsCollected: newParts,
+        repairState: Math.min(newParts.length, 3) as RepairState,
       };
     }),
 

@@ -191,77 +191,81 @@ export class GameScene {
   elbowPivots: Map<string, THREE.Group> = new Map();
 
   private setupLimbs(robotModel: THREE.Group, _scaleFactor: number) {
-    // CRITICAL: update world matrices so we can get correct world-space positions
+    // Use MODEL-LOCAL coordinates from geometry bounds for reliable classification.
+    // The GLB model has: Y range ~[-3, +3], X center ~0, arms at |X|>0.5, legs at Y<-1
+    // Model -X = robot's left arm (becomes world +X after PI rotation)
+    // Model +X = robot's right arm (becomes world -X after PI rotation)
+    // But for LEVEL1_PARTS ids: right_arm/left_leg/right_leg refer to the ROBOT's perspective
+
     robotModel.updateMatrixWorld(true);
 
-    // Collect all meshes with their WORLD-SPACE bounding box centers
-    const allMeshes: { mesh: THREE.Mesh; worldCenter: THREE.Vector3; worldBox: THREE.Box3 }[] = [];
+    // Get each mesh's LOCAL center from its geometry bounding box (unaffected by transforms)
+    const allMeshes: { mesh: THREE.Mesh; localCenter: THREE.Vector3; localBox: THREE.Box3 }[] = [];
     robotModel.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
-        const worldBox = new THREE.Box3().setFromObject(mesh);
-        const worldCenter = worldBox.getCenter(new THREE.Vector3());
-        allMeshes.push({ mesh, worldCenter, worldBox });
+        mesh.geometry.computeBoundingBox();
+        const localBox = mesh.geometry.boundingBox!.clone();
+        const localCenter = localBox.getCenter(new THREE.Vector3());
+        allMeshes.push({ mesh, localCenter, localBox });
       }
     });
 
     if (allMeshes.length === 0) return;
 
-    // Overall robot bounds in world space
-    const fullBox = new THREE.Box3().setFromObject(robotModel);
-    const fullCenter = fullBox.getCenter(new THREE.Vector3());
-    const fullSize = fullBox.getSize(new THREE.Vector3());
-
-    const midX = fullCenter.x;
-    const bottomY = fullBox.min.y;
-    const topY = fullBox.max.y;
-
     // Log ALL meshes for debugging
-    console.log(`[APEX] Robot bounds: bottom=${bottomY.toFixed(3)} top=${topY.toFixed(3)} center=(${midX.toFixed(2)}, ${fullCenter.y.toFixed(2)}), size=(${fullSize.x.toFixed(2)}, ${fullSize.y.toFixed(2)}, ${fullSize.z.toFixed(2)})`);
-    for (const { mesh, worldCenter, worldBox } of allMeshes) {
-      const sz = worldBox.getSize(new THREE.Vector3());
-      console.log(`  mesh: "${mesh.name}" center=(${worldCenter.x.toFixed(3)}, ${worldCenter.y.toFixed(3)}, ${worldCenter.z.toFixed(3)}) size=(${sz.x.toFixed(3)}, ${sz.y.toFixed(3)}, ${sz.z.toFixed(3)})`);
+    console.log(`[APEX] Robot meshes (model-local coords):`);
+    for (const { mesh, localCenter, localBox } of allMeshes) {
+      const sz = localBox.getSize(new THREE.Vector3());
+      console.log(`  "${mesh.name}" center=(${localCenter.x.toFixed(3)}, ${localCenter.y.toFixed(3)}, ${localCenter.z.toFixed(3)}) size=(${sz.x.toFixed(3)}, ${sz.y.toFixed(3)}, ${sz.z.toFixed(3)})`);
     }
 
-    // Remove antenna/sphere: any mesh whose BOTTOM is above 90% of robot height
-    const antennaThresholdY = bottomY + fullSize.y * 0.88;
+    // --- Remove antenna/sphere: meshes with center Y > 2.3 in model-local space ---
+    const antennaMinY = 2.3;
     const meshesToRemove: THREE.Mesh[] = [];
-    for (const { mesh, worldBox } of allMeshes) {
-      if (worldBox.min.y > antennaThresholdY) {
-        console.log(`  [REMOVE] antenna/sphere: "${mesh.name}" (bottom=${worldBox.min.y.toFixed(3)} > ${antennaThresholdY.toFixed(3)})`);
+    for (const { mesh, localCenter } of allMeshes) {
+      if (localCenter.y > antennaMinY) {
+        console.log(`  [REMOVE] antenna: "${mesh.name}" (localY=${localCenter.y.toFixed(3)})`);
         meshesToRemove.push(mesh);
       }
     }
     for (const mesh of meshesToRemove) {
       mesh.removeFromParent();
-      allMeshes.splice(allMeshes.findIndex(m => m.mesh === mesh), 1);
+      const idx = allMeshes.findIndex(m => m.mesh === mesh);
+      if (idx >= 0) allMeshes.splice(idx, 1);
     }
 
-    // Classification thresholds (world space)
-    // hipY: the boundary between torso and legs — at ~45% from bottom
-    const hipY = bottomY + fullSize.y * 0.45;
-    // armThresholdX: minimum X distance from center to be considered an arm
-    const armThresholdX = fullSize.x * 0.15;
-    // Arm must be above this Y to avoid classifying hip-area meshes as arms
-    const armMinY = bottomY + fullSize.y * 0.50;
+    // --- Classification in model-local coordinates ---
+    // Hip line: Y = -1.0 (meshes below this are legs)
+    // Arm threshold: |X| > 0.45 AND Y > -0.5 (arms are offset from center and above hip)
+    // Model -X side = left arm (in model space) → which is the ROBOT's LEFT (world +X after PI flip)
+    // Model +X side = right arm (in model space) → which is the ROBOT's RIGHT (world -X after PI flip)
+    // But LEVEL1_PARTS uses robot perspective names, and the model is viewed from FRONT
+    // Model -X = character's RIGHT side, Model +X = character's LEFT side
+    // After PI rotation: model -X → world +X = robot's RIGHT, model +X → world -X = robot's LEFT
+    const HIP_Y = -1.0;
+    const ARM_MIN_X = 0.45;
+    const ARM_MIN_Y = -0.5;
+    const LEG_MIN_X = 0.1; // legs must be somewhat offset from dead center
 
     const regions: Record<string, THREE.Mesh[]> = {
       right_arm: [], left_arm: [], left_leg: [], right_leg: [],
     };
 
-    for (const { mesh, worldCenter } of allMeshes) {
-      const distFromCenter = Math.abs(worldCenter.x - midX);
+    for (const { mesh, localCenter } of allMeshes) {
+      const absX = Math.abs(localCenter.x);
 
-      if (distFromCenter > armThresholdX && worldCenter.y > armMinY) {
-        // Far from center AND above hip = arm (model is flipped PI, so world X is inverted)
-        if (worldCenter.x > midX) {
-          regions.left_arm.push(mesh);
+      if (absX > ARM_MIN_X && localCenter.y > ARM_MIN_Y) {
+        // Arm: far from center and above hip area
+        // Model -X = robot's right, Model +X = robot's left
+        if (localCenter.x < 0) {
+          regions.left_arm.push(mesh); // model -X → robot's left (after PI flip, world +X)
         } else {
-          regions.right_arm.push(mesh);
+          regions.right_arm.push(mesh); // model +X → robot's right (after PI flip, world -X)
         }
-      } else if (worldCenter.y < hipY && distFromCenter > armThresholdX * 0.2) {
-        // Below hip line and offset from center = leg (includes feet, hip motors)
-        if (worldCenter.x > midX) {
+      } else if (localCenter.y < HIP_Y && absX > LEG_MIN_X) {
+        // Leg: below hip and offset from center
+        if (localCenter.x < 0) {
           regions.left_leg.push(mesh);
         } else {
           regions.right_leg.push(mesh);
@@ -269,12 +273,12 @@ export class GameScene {
       }
     }
 
-    console.log(`[APEX] Thresholds: hipY=${hipY.toFixed(3)} armMinY=${armMinY.toFixed(3)} armThresholdX=${armThresholdX.toFixed(3)}`);
-    console.log(`[APEX] Classification: LA=${regions.left_arm.length} RA=${regions.right_arm.length} LL=${regions.left_leg.length} RL=${regions.right_leg.length} total=${allMeshes.length}`);
+    console.log(`[APEX] Classification: LA=${regions.left_arm.length} RA=${regions.right_arm.length} LL=${regions.left_leg.length} RL=${regions.right_leg.length} body=${allMeshes.length - Object.values(regions).flat().length} total=${allMeshes.length}`);
     for (const [region, meshes] of Object.entries(regions)) {
       for (const m of meshes) {
-        const wc = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3());
-        console.log(`  ${region}: "${m.name}" at world (${wc.x.toFixed(3)}, ${wc.y.toFixed(3)}, ${wc.z.toFixed(3)})`);
+        m.geometry.computeBoundingBox();
+        const c = m.geometry.boundingBox!.getCenter(new THREE.Vector3());
+        console.log(`  ${region}: "${m.name}" local=(${c.x.toFixed(3)}, ${c.y.toFixed(3)}, ${c.z.toFixed(3)})`);
       }
     }
 
@@ -286,13 +290,14 @@ export class GameScene {
       // World-space bounding box for this arm
       const limbBox = new THREE.Box3();
       for (const m of meshes) limbBox.expandByObject(m);
+      const limbSize = limbBox.getSize(new THREE.Vector3());
 
       // Shoulder = top of arm, toward body center
       const shoulderWorld = new THREE.Vector3(
         armId === 'left_arm'
           ? limbBox.min.x   // left arm: inner edge is min X (toward center)
           : limbBox.max.x,  // right arm: inner edge is max X (toward center)
-        limbBox.max.y - fullSize.y * 0.02,
+        limbBox.max.y - limbSize.y * 0.05,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
 
@@ -306,9 +311,12 @@ export class GameScene {
 
       const upperMeshes: THREE.Mesh[] = [];
       const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh: m, worldCenter: wc } of allMeshes) {
+      for (const { mesh: m, localCenter } of allMeshes) {
         if (!meshes.includes(m)) continue;
-        if (wc.y >= elbowSplitY) upperMeshes.push(m);
+        // Use world-space Y for upper/lower split
+        const wBox = new THREE.Box3().setFromObject(m);
+        const wCenter = wBox.getCenter(new THREE.Vector3());
+        if (wCenter.y >= elbowSplitY) upperMeshes.push(m);
         else lowerMeshes.push(m);
       }
 
@@ -369,9 +377,11 @@ export class GameScene {
 
       const upperMeshes: THREE.Mesh[] = [];
       const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh: m, worldCenter: wc } of allMeshes) {
+      for (const { mesh: m } of allMeshes) {
         if (!meshes.includes(m)) continue;
-        if (wc.y >= kneeSplitY) upperMeshes.push(m);
+        const wBox = new THREE.Box3().setFromObject(m);
+        const wCenter = wBox.getCenter(new THREE.Vector3());
+        if (wCenter.y >= kneeSplitY) upperMeshes.push(m);
         else lowerMeshes.push(m);
       }
 
@@ -435,28 +445,24 @@ export class GameScene {
         group.add(clone);
       }
 
-      // Scale down the scattered part so it looks like a detached piece, not full-size
-      const partScale = 0.5;
-      group.scale.setScalar(partScale);
-
-      // Compute local bounding box of all clones, then shift down so bottom = 0
+      // Compute local bounding box of all clones, then shift so center is at origin
       const localBox = new THREE.Box3();
       for (const child of group.children) {
         localBox.expandByObject(child);
       }
-      const localBottom = localBox.min.y;
+      const localCenter = localBox.getCenter(new THREE.Vector3());
       for (const child of group.children) {
-        child.position.y -= localBottom;
+        child.position.sub(localCenter);
       }
 
       if (part.type === 'arm') {
         // Arm lying on its side in the snow, partially buried
-        group.rotation.set(0, 0.3, Math.PI / 2);
-        group.position.set(part.position[0], -0.03, part.position[2]);
+        group.rotation.set(Math.PI / 2, 0.3, 0.1);
+        group.position.set(part.position[0], 0.05, part.position[2]);
       } else {
         // Leg lying flat on snow, partially buried
         group.rotation.set(Math.PI / 2, 0.2, 0.1);
-        group.position.set(part.position[0], -0.03, part.position[2]);
+        group.position.set(part.position[0], 0.05, part.position[2]);
       }
 
       this.scene.add(group);
