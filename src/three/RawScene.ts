@@ -169,134 +169,130 @@ export class GameScene {
   // Elbow pivots (child of shoulder pivot, like knee is child of hip)
   elbowPivots: Map<string, THREE.Group> = new Map();
 
-  private setupLimbs(robotModel: THREE.Group, scaleFactor: number) {
-    // Collect all meshes with their geometry bounding box centers
-    const allMeshes: { mesh: THREE.Mesh; center: THREE.Vector3; box: THREE.Box3 }[] = [];
+  private setupLimbs(robotModel: THREE.Group, _scaleFactor: number) {
+    // CRITICAL: update world matrices so we can get correct world-space positions
+    robotModel.updateMatrixWorld(true);
+
+    // Collect all meshes with their WORLD-SPACE bounding box centers
+    const allMeshes: { mesh: THREE.Mesh; worldCenter: THREE.Vector3; worldBox: THREE.Box3 }[] = [];
     robotModel.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
-        mesh.geometry.computeBoundingBox();
-        const bb = mesh.geometry.boundingBox!;
-        const center = bb.getCenter(new THREE.Vector3());
-        allMeshes.push({ mesh, center, box: bb.clone() });
+        const worldBox = new THREE.Box3().setFromObject(mesh);
+        const worldCenter = worldBox.getCenter(new THREE.Vector3());
+        allMeshes.push({ mesh, worldCenter, worldBox });
       }
     });
 
     if (allMeshes.length === 0) return;
 
-    // Overall robot bounds
-    const fullBox = new THREE.Box3();
-    for (const { box } of allMeshes) {
-      fullBox.expandByPoint(box.min);
-      fullBox.expandByPoint(box.max);
-    }
+    // Overall robot bounds in world space
+    const fullBox = new THREE.Box3().setFromObject(robotModel);
     const fullCenter = fullBox.getCenter(new THREE.Vector3());
     const fullSize = fullBox.getSize(new THREE.Vector3());
 
     const midX = fullCenter.x;
     const bottomY = fullBox.min.y;
 
-    // Key measurements for classification:
-    // - Hip line: ~45% up from bottom (where legs meet torso)
-    // - Arm threshold: meshes beyond 15% of full width from center are arm candidates
-    // - Foot line: bottom 10% of height
+    // Classification thresholds (world space)
     const hipY = bottomY + fullSize.y * 0.45;
-    const footY = bottomY + fullSize.y * 0.10;
-    const armThresholdX = fullSize.x * 0.15;
+    const footY = bottomY + fullSize.y * 0.08;
+    const armThresholdX = fullSize.x * 0.12;
 
-    // Step 1: Classify by X distance from center (arms vs body/legs)
-    // Arms are ANY mesh far from center X, regardless of Y
-    // Legs are meshes below hip line AND close to center X
     const regions: Record<string, THREE.Mesh[]> = {
-      right_arm: [],
-      left_arm: [],
-      left_leg: [],
-      right_leg: [],
+      right_arm: [], left_arm: [], left_leg: [], right_leg: [],
     };
 
-    for (const { mesh, center } of allMeshes) {
-      const distFromCenter = Math.abs(center.x - midX);
+    for (const { mesh, worldCenter } of allMeshes) {
+      const distFromCenter = Math.abs(worldCenter.x - midX);
 
-      if (distFromCenter > armThresholdX && center.y > footY) {
-        // Far from center and above feet = arm
-        if (center.x > midX) {
-          regions.right_arm.push(mesh);
+      if (distFromCenter > armThresholdX && worldCenter.y > hipY * 0.8) {
+        // Far from center = arm (model is flipped PI, so world X is inverted)
+        if (worldCenter.x > midX) {
+          regions.left_arm.push(mesh);   // world +X = robot's left (model flipped)
         } else {
-          regions.left_arm.push(mesh);
+          regions.right_arm.push(mesh);
         }
-      } else if (center.y < hipY) {
-        // Below hip line and near center = leg
-        if (center.x < midX) {
+      } else if (worldCenter.y < hipY && worldCenter.y > footY) {
+        // Below hip, above feet = leg
+        if (worldCenter.x > midX) {
           regions.left_leg.push(mesh);
         } else {
           regions.right_leg.push(mesh);
         }
       }
-      // else: torso/head — not assigned to any limb
     }
 
+    console.log(`[APEX] Robot bounds: center=(${midX.toFixed(2)}, ${fullCenter.y.toFixed(2)}), size=(${fullSize.x.toFixed(2)}, ${fullSize.y.toFixed(2)}, ${fullSize.z.toFixed(2)})`);
     console.log(`[APEX] Classification: LA=${regions.left_arm.length} RA=${regions.right_arm.length} LL=${regions.left_leg.length} RL=${regions.right_leg.length} total=${allMeshes.length}`);
+    for (const [region, meshes] of Object.entries(regions)) {
+      for (const m of meshes) {
+        const wc = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3());
+        console.log(`  ${region}: "${m.name}" at world (${wc.x.toFixed(3)}, ${wc.y.toFixed(3)}, ${wc.z.toFixed(3)})`);
+      }
+    }
 
-    // --- Create arm pivots with elbow sub-pivots ---
+    // --- Create limb pivots using world-space positions + attach() ---
     for (const armId of ['left_arm', 'right_arm']) {
       const meshes = regions[armId];
       if (meshes.length === 0) continue;
 
+      // World-space bounding box for this arm
       const limbBox = new THREE.Box3();
-      for (const mesh of meshes) limbBox.union(mesh.geometry.boundingBox!);
+      for (const m of meshes) limbBox.expandByObject(m);
 
-      // Shoulder pivot at top-inner corner of arm bounding box
-      const shoulderPoint = new THREE.Vector3(
-        armId === 'left_arm' ? limbBox.max.x : limbBox.min.x,  // inner edge
-        limbBox.max.y,
+      // Shoulder = top of arm, toward body center
+      const shoulderWorld = new THREE.Vector3(
+        armId === 'left_arm'
+          ? limbBox.min.x   // left arm: inner edge is min X (toward center)
+          : limbBox.max.x,  // right arm: inner edge is max X (toward center)
+        limbBox.max.y - fullSize.y * 0.02,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
 
-      // Split upper/lower arm at Y midpoint for elbow
+      // Elbow at Y midpoint
       const elbowSplitY = (limbBox.min.y + limbBox.max.y) / 2;
-
-      const upperMeshes: THREE.Mesh[] = [];
-      const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh: m, center: c } of allMeshes) {
-        if (!meshes.includes(m)) continue;
-        if (c.y >= elbowSplitY) {
-          upperMeshes.push(m);
-        } else {
-          lowerMeshes.push(m);
-        }
-      }
-
-      // Create shoulder pivot
-      const shoulderPivot = new THREE.Group();
-      shoulderPivot.position.copy(shoulderPoint);
-
-      const parent = meshes[0].parent;
-      if (parent) parent.add(shoulderPivot);
-
-      // Reparent upper arm into shoulder pivot
-      for (const mesh of upperMeshes) {
-        mesh.removeFromParent();
-        mesh.position.sub(shoulderPoint);
-        shoulderPivot.add(mesh);
-      }
-
-      // Elbow pivot as child of shoulder pivot
-      const elbowPoint = new THREE.Vector3(
+      const elbowWorld = new THREE.Vector3(
         (limbBox.min.x + limbBox.max.x) / 2,
         elbowSplitY,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
-      const elbowRelative = elbowPoint.clone().sub(shoulderPoint);
 
+      const upperMeshes: THREE.Mesh[] = [];
+      const lowerMeshes: THREE.Mesh[] = [];
+      for (const { mesh: m, worldCenter: wc } of allMeshes) {
+        if (!meshes.includes(m)) continue;
+        if (wc.y >= elbowSplitY) upperMeshes.push(m);
+        else lowerMeshes.push(m);
+      }
+
+      // Create shoulder pivot in model-local space
+      const shoulderLocal = shoulderWorld.clone();
+      robotModel.worldToLocal(shoulderLocal);
+      const shoulderPivot = new THREE.Group();
+      shoulderPivot.name = `pivot_${armId}_shoulder`;
+      shoulderPivot.position.copy(shoulderLocal);
+      robotModel.add(shoulderPivot);
+      robotModel.updateMatrixWorld(true);
+
+      // Attach upper arm meshes (preserves their world position)
+      for (const mesh of upperMeshes) {
+        shoulderPivot.attach(mesh);
+      }
+
+      // Elbow pivot as child of shoulder
+      const elbowLocal = elbowWorld.clone();
+      robotModel.worldToLocal(elbowLocal);
+      const elbowRelative = elbowLocal.clone().sub(shoulderLocal);
       const elbowPivot = new THREE.Group();
+      elbowPivot.name = `pivot_${armId}_elbow`;
       elbowPivot.position.copy(elbowRelative);
       shoulderPivot.add(elbowPivot);
+      shoulderPivot.updateMatrixWorld(true);
 
-      // Reparent lower arm (forearm + hand) into elbow pivot
+      // Attach lower arm meshes
       for (const mesh of lowerMeshes) {
-        mesh.removeFromParent();
-        mesh.position.sub(elbowPoint);
-        elbowPivot.add(mesh);
+        elbowPivot.attach(mesh);
       }
 
       this.limbPivots.set(armId, shoulderPivot);
@@ -309,90 +305,89 @@ export class GameScene {
       if (meshes.length === 0) continue;
 
       const limbBox = new THREE.Box3();
-      for (const mesh of meshes) limbBox.union(mesh.geometry.boundingBox!);
+      for (const m of meshes) limbBox.expandByObject(m);
 
       const kneeSplitY = (limbBox.min.y + limbBox.max.y) / 2;
 
-      const upperMeshes: THREE.Mesh[] = [];
-      const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh: m, center: c } of allMeshes) {
-        if (!meshes.includes(m)) continue;
-        if (c.y >= kneeSplitY) {
-          upperMeshes.push(m);
-        } else {
-          lowerMeshes.push(m);
-        }
-      }
-
-      const hipPoint = new THREE.Vector3(
+      const hipWorld = new THREE.Vector3(
         (limbBox.min.x + limbBox.max.x) / 2,
         limbBox.max.y,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
 
-      const hipPivot = new THREE.Group();
-      hipPivot.position.copy(hipPoint);
-
-      const parent = meshes[0].parent;
-      if (parent) parent.add(hipPivot);
-
-      for (const mesh of upperMeshes) {
-        mesh.removeFromParent();
-        mesh.position.sub(hipPoint);
-        hipPivot.add(mesh);
-      }
-
-      const kneePoint = new THREE.Vector3(
+      const kneeWorld = new THREE.Vector3(
         (limbBox.min.x + limbBox.max.x) / 2,
         kneeSplitY,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
-      const kneeRelative = kneePoint.clone().sub(hipPoint);
 
+      const upperMeshes: THREE.Mesh[] = [];
+      const lowerMeshes: THREE.Mesh[] = [];
+      for (const { mesh: m, worldCenter: wc } of allMeshes) {
+        if (!meshes.includes(m)) continue;
+        if (wc.y >= kneeSplitY) upperMeshes.push(m);
+        else lowerMeshes.push(m);
+      }
+
+      const hipLocal = hipWorld.clone();
+      robotModel.worldToLocal(hipLocal);
+      const hipPivot = new THREE.Group();
+      hipPivot.name = `pivot_${legId}_hip`;
+      hipPivot.position.copy(hipLocal);
+      robotModel.add(hipPivot);
+      robotModel.updateMatrixWorld(true);
+
+      for (const mesh of upperMeshes) {
+        hipPivot.attach(mesh);
+      }
+
+      const kneeLocal = kneeWorld.clone();
+      robotModel.worldToLocal(kneeLocal);
+      const kneeRelative = kneeLocal.clone().sub(hipLocal);
       const kneePivot = new THREE.Group();
+      kneePivot.name = `pivot_${legId}_knee`;
       kneePivot.position.copy(kneeRelative);
       hipPivot.add(kneePivot);
+      hipPivot.updateMatrixWorld(true);
 
       for (const mesh of lowerMeshes) {
-        mesh.removeFromParent();
-        mesh.position.sub(kneePoint);
-        kneePivot.add(mesh);
+        kneePivot.attach(mesh);
       }
 
       this.limbPivots.set(legId, hipPivot);
       this.kneePivots.set(legId, kneePivot);
     }
 
-    // --- Hide collectible limb meshes + create scattered ground pieces ---
+    // --- Hide collectible limbs + create scattered ground pieces ---
     for (const part of LEVEL1_PARTS) {
       const meshes = regions[part.id];
       if (!meshes || meshes.length === 0) continue;
 
-      // Hide on robot body
+      // Hide on robot body (in their pivots)
       for (const mesh of meshes) {
         mesh.visible = false;
       }
       this.hiddenLimbMeshes.set(part.id, meshes);
 
-      // Create scattered clone on the ground
+      // Create scattered clone on the ground (using world-space positions)
       const group = new THREE.Group();
-      const partBox = new THREE.Box3();
+      const partWorldBox = new THREE.Box3();
+      for (const mesh of meshes) partWorldBox.expandByObject(mesh);
+      const partWorldCenter = partWorldBox.getCenter(new THREE.Vector3());
+
       for (const mesh of meshes) {
         const clone = mesh.clone();
         clone.visible = true;
         clone.castShadow = true;
         clone.receiveShadow = true;
+        // Position clone relative to part center
+        const meshWorldPos = new THREE.Vector3();
+        mesh.getWorldPosition(meshWorldPos);
+        clone.position.copy(meshWorldPos.sub(partWorldCenter));
+        clone.rotation.set(0, 0, 0); // reset rotation for ground placement
+        clone.scale.setScalar(1);
         group.add(clone);
-        const bb = mesh.geometry.boundingBox!;
-        partBox.union(bb);
       }
-
-      group.scale.setScalar(scaleFactor);
-
-      const partCenter = partBox.getCenter(new THREE.Vector3());
-      group.children.forEach((child) => {
-        child.position.sub(partCenter);
-      });
 
       group.position.set(part.position[0], 0.15, part.position[2]);
 
@@ -492,6 +487,7 @@ export class GameScene {
       color: new THREE.Color(0.93, 0.93, 0.96),
       roughness: 0.9,
       metalness: 0,
+      vertexColors: true,
     });
     const snowMesh = new THREE.Mesh(snowGeo, snowMat);
     snowMesh.position.set(0, 0.001, 10); // centered on play area, slightly above terrain
@@ -504,6 +500,15 @@ export class GameScene {
     for (let i = 0; i < posAttr.count; i++) {
       baseY[i] = posAttr.getY(i);
     }
+
+    // Initialize vertex colors (white snow)
+    const colors = new Float32Array(posAttr.count * 3);
+    for (let i = 0; i < posAttr.count; i++) {
+      colors[i * 3] = 0.93;
+      colors[i * 3 + 1] = 0.93;
+      colors[i * 3 + 2] = 0.96;
+    }
+    snowGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     this.snowMesh = snowMesh;
     this.snowGeo = snowGeo;
@@ -936,18 +941,18 @@ export class GameScene {
     const snowPos = this.snowMesh.position;
     const posAttr = this.snowGeo.attributes.position;
     const halfSize = this.SNOW_SIZE / 2;
-    const step = this.SNOW_SIZE / this.SNOW_SEGS; // distance between vertices
+    const step = this.SNOW_SIZE / this.SNOW_SEGS;
 
-    // Contact parameters per state
+    // Contact parameters per state — depths large enough to be clearly visible
     let radius: number, depth: number, widthScale: number;
     if (repairState === 0) {
-      radius = 1.2;  depth = 0.04;  widthScale = 1.5; // wide body drag
+      radius = 1.4;  depth = 0.12;  widthScale = 1.8; // wide body drag
     } else if (repairState === 1) {
-      radius = 0.8;  depth = 0.035; widthScale = 1.3; // body drag
+      radius = 1.0;  depth = 0.10;  widthScale = 1.5; // body drag
     } else if (repairState === 2) {
-      radius = 0.25; depth = 0.025; widthScale = 1.0; // single foot
+      radius = 0.35; depth = 0.08;  widthScale = 1.0; // single foot hop
     } else {
-      radius = 0.2;  depth = 0.02;  widthScale = 1.0; // footprints
+      radius = 0.25; depth = 0.06;  widthScale = 1.0; // footprints
     }
 
     // Robot position in snow-local space
@@ -1062,6 +1067,26 @@ export class GameScene {
     if (modified) {
       posAttr.needsUpdate = true;
       this.snowGeo.computeVertexNormals();
+
+      // Darken vertex colors where snow is deformed (track marks)
+      const colorAttr = this.snowGeo.attributes.color;
+      if (colorAttr) {
+        for (let i = 0; i < posAttr.count; i++) {
+          const currentY = posAttr.getY(i);
+          const baseYVal = this.snowBaseY[i];
+          const deformAmount = Math.max(0, baseYVal - currentY);
+          if (deformAmount > 0.005) {
+            // Darken proportionally: deeper = darker (grey/brown)
+            const darken = Math.min(deformAmount * 6, 0.35);
+            colorAttr.setXYZ(i,
+              0.93 - darken * 0.7,  // less red (grey tint)
+              0.93 - darken * 0.6,
+              0.96 - darken * 0.5,
+            );
+          }
+        }
+        (colorAttr as THREE.BufferAttribute).needsUpdate = true;
+      }
     }
   }
 
