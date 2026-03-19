@@ -36,26 +36,22 @@ function generateNoiseTexture(size = 256): THREE.DataTexture {
 
 function generateBrushTexture(size = 256): THREE.DataTexture {
   const data = new Uint8Array(size * size * 4);
-  // Directional brush strokes using angled sine waves + noise
+  // Pure noise-based brush: no sine waves, no visible pattern
+  // Uses multi-scale hash noise smoothed by local averaging
+  const hash = (x: number, y: number, seed: number) => {
+    let h = (x + seed * 17) * 374761393 + (y + seed * 31) * 668265263;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return ((h ^ (h >> 16)) & 0xff) / 255;
+  };
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = (y * size + x) * 4;
-      const nx = x / size, ny = y / size;
-
-      // Primary brush direction (diagonal)
-      const stroke1 = Math.sin((nx * 8 + ny * 3) * Math.PI * 2) * 0.3;
-      // Cross strokes at different frequency
-      const stroke2 = Math.sin((nx * 3 - ny * 7) * Math.PI * 2) * 0.15;
-      // Fine bristle detail
-      const bristle = Math.sin((nx * 24 + ny * 2) * Math.PI * 2) * 0.08;
-      // Noise perturbation
-      let h = Math.floor(nx * 127 + 1) * 374761393 + Math.floor(ny * 127 + 1) * 668265263;
-      h = (h ^ (h >> 13)) * 1274126177;
-      const noise = ((h ^ (h >> 16)) & 0xff) / 255 - 0.5;
-
-      const val = Math.max(0, Math.min(255,
-        Math.floor((0.5 + stroke1 + stroke2 + bristle + noise * 0.12) * 255)
-      ));
+      // Multi-octave noise at different scales for organic feel
+      const n1 = hash(x, y, 0);
+      const n2 = hash(Math.floor(x / 2), Math.floor(y / 2), 1);
+      const n3 = hash(Math.floor(x / 4), Math.floor(y / 4), 2);
+      // Blend: fine detail + medium + coarse
+      const val = Math.floor((n1 * 0.4 + n2 * 0.35 + n3 * 0.25) * 255);
       data[i] = data[i + 1] = data[i + 2] = val;
       data[i + 3] = 255;
     }
@@ -221,11 +217,11 @@ void main() {
   color.rgb = mix(color.rgb, edgeColor, edge * 0.55);
 
   // ── Brush stroke overlay ──
-  vec2 brushUV = gl_FragCoord.xy / 200.0; // tile every 200px
+  vec2 brushUV = gl_FragCoord.xy / 512.0; // large tile = less visible repeat
   float brush = texture2D(tBrush, brushUV).r;
 
   // Paper grain at different frequency
-  vec2 paperUV = gl_FragCoord.xy / 100.0;
+  vec2 paperUV = gl_FragCoord.xy / 384.0;
   float paper = texture2D(tPaper, paperUV).r;
 
   float luminance = luma(color.rgb);
@@ -306,10 +302,10 @@ export class PainterlyPipeline {
         tBrush: { value: this.brushTex },
         tPaper: { value: this.paperTex },
         resolution: { value: new THREE.Vector2(size.x, size.y) },
-        edgeThickness: { value: 1.8 },
-        edgeWobble: { value: 3.0 },
-        brushStrength: { value: 0.09 },
-        paperStrength: { value: 0.04 },
+        edgeThickness: { value: 1.5 },
+        edgeWobble: { value: 2.0 },
+        brushStrength: { value: 0.03 },
+        paperStrength: { value: 0.015 },
       },
       vertexShader: fullscreenVert,
       fragmentShader: edgeBrushFrag,
