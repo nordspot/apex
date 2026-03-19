@@ -73,7 +73,6 @@ export class GameScene {
   // Animation state
   private walkCycle = 0;
   private robotBaseY = 0;
-  private robotScale = 1;
   private targetPoseY = 0;
   private targetPoseRotX = 0;
   private targetPoseRotZ = 0;
@@ -159,7 +158,6 @@ export class GameScene {
 
       const targetHeight = 1.8;
       const scaleFactor = targetHeight / size.y;
-      this.robotScale = scaleFactor;
       model.scale.setScalar(scaleFactor);
 
       this.robotBaseY = -box.min.y * scaleFactor;
@@ -431,32 +429,39 @@ export class GameScene {
       this.hiddenLimbMeshes.set(part.id, meshes);
 
       // Create scattered clone on the ground
-      // Use world-space positions for correct relative placement,
-      // then scale to match in-game robot size
+      // Clone each mesh and bake its world transform into the geometry,
+      // then center the group so all pieces stay connected
       const group = new THREE.Group();
-
-      // Get world-space center of all meshes in this limb
-      const limbWorldBox = new THREE.Box3();
-      for (const mesh of meshes) limbWorldBox.expandByObject(mesh);
-      const limbWorldCenter = limbWorldBox.getCenter(new THREE.Vector3());
 
       for (const mesh of meshes) {
         const clone = mesh.clone();
         clone.visible = true;
         clone.castShadow = true;
         clone.receiveShadow = true;
-        // Get this mesh's world position and place relative to limb center
-        const meshWorldPos = new THREE.Vector3();
-        mesh.getWorldPosition(meshWorldPos);
-        clone.position.copy(meshWorldPos.sub(limbWorldCenter));
-        // Preserve the mesh's world rotation and scale
-        const meshWorldQuat = new THREE.Quaternion();
-        mesh.getWorldQuaternion(meshWorldQuat);
-        clone.quaternion.copy(meshWorldQuat);
-        const meshWorldScale = new THREE.Vector3();
-        mesh.getWorldScale(meshWorldScale);
-        clone.scale.copy(meshWorldScale);
+        // Bake the mesh's full world matrix into the geometry
+        // This flattens position/rotation/scale into vertex data
+        const worldMatrix = new THREE.Matrix4();
+        mesh.updateWorldMatrix(true, false);
+        worldMatrix.copy(mesh.matrixWorld);
+        clone.geometry = mesh.geometry.clone();
+        clone.geometry.applyMatrix4(worldMatrix);
+        // Reset clone transform since geometry now has world coords baked in
+        clone.position.set(0, 0, 0);
+        clone.quaternion.identity();
+        clone.scale.set(1, 1, 1);
         group.add(clone);
+      }
+
+      // Now center the group: compute bounding box and shift all geometries
+      const groupBox = new THREE.Box3();
+      for (const child of group.children) {
+        groupBox.expandByObject(child);
+      }
+      const groupCenter = groupBox.getCenter(new THREE.Vector3());
+      for (const child of group.children) {
+        if ((child as THREE.Mesh).isMesh) {
+          (child as THREE.Mesh).geometry.translate(-groupCenter.x, -groupCenter.y, -groupCenter.z);
+        }
       }
 
       if (part.type === 'arm') {
@@ -751,7 +756,26 @@ export class GameScene {
       moveDir.addScaledVector(right, moveX);
       moveDir.normalize();
 
-      this.memo9.position.addScaledVector(moveDir, speed * delta);
+      // For crawl states (0, 1): sync movement to arm PULL phase
+      // MEMO only moves when arm is pulling body forward, not during reach
+      let effectiveSpeed = speed;
+      const t = this.walkCycle;
+      if (repairState === 0) {
+        // State 0: one-arm crawl, cycle = sin(t * 0.9)
+        // Pull phase = when cycle > 0 (arm pulling back = body moves forward)
+        const cycle = Math.sin(t * 0.9);
+        const pullForce = Math.max(0, cycle); // 0 during reach, 0→1 during pull
+        effectiveSpeed = speed * pullForce * 2.5; // amplify since it's only half the cycle
+      } else if (repairState === 1) {
+        // State 1: two-arm crawl, alternating — always one arm pulling
+        const cycle = Math.sin(t * 1.1);
+        // Either arm is pulling at any time: use abs but with a bump pattern
+        const pullForce = Math.abs(cycle);
+        // Add lurching: faster at peak pull, slower between
+        effectiveSpeed = speed * (0.3 + pullForce * 1.8);
+      }
+
+      this.memo9.position.addScaledVector(moveDir, effectiveSpeed * delta);
       this.memo9.position.y = 0;
 
       const targetAngle = Math.atan2(moveDir.x, moveDir.z);
