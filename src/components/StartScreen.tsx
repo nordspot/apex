@@ -28,7 +28,7 @@ export function StartScreen() {
         style={{
           height: 60,
           marginBottom: 16,
-          filter: 'drop-shadow(0 0 20px rgba(0,100,255,0.3)) brightness(1.8)',
+          filter: 'drop-shadow(0 0 20px rgba(0,100,255,0.3)) brightness(100)',
         }}
       />
 
