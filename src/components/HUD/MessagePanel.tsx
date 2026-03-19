@@ -9,9 +9,9 @@ export function MessagePanel() {
     <div
       style={{
         position: 'absolute',
-        top: '40%',
+        top: 40,
         left: '50%',
-        transform: 'translate(-50%, -50%)',
+        transform: 'translateX(-50%)',
         background: 'rgba(5, 20, 51, 0.82)',
         border: '1px solid rgba(77, 194, 255, 0.70)',
         borderRadius: 16,

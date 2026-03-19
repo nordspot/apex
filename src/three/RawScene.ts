@@ -431,34 +431,33 @@ export class GameScene {
       this.hiddenLimbMeshes.set(part.id, meshes);
 
       // Create scattered clone on the ground
-      // Use geometry bounding boxes (model-local coords) for positioning,
-      // then apply robotScale so clones match the in-game robot size
+      // Use world-space positions for correct relative placement,
+      // then scale to match in-game robot size
       const group = new THREE.Group();
 
-      // Compute combined bounding box in model-local space
-      const combinedLocalBox = new THREE.Box3();
-      for (const mesh of meshes) {
-        mesh.geometry.computeBoundingBox();
-        combinedLocalBox.union(mesh.geometry.boundingBox!);
-      }
-      const combinedCenter = combinedLocalBox.getCenter(new THREE.Vector3());
+      // Get world-space center of all meshes in this limb
+      const limbWorldBox = new THREE.Box3();
+      for (const mesh of meshes) limbWorldBox.expandByObject(mesh);
+      const limbWorldCenter = limbWorldBox.getCenter(new THREE.Vector3());
 
       for (const mesh of meshes) {
         const clone = mesh.clone();
         clone.visible = true;
         clone.castShadow = true;
         clone.receiveShadow = true;
-        // Position relative to combined center (model-local coords)
-        mesh.geometry.computeBoundingBox();
-        const meshCenter = mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
-        clone.position.copy(meshCenter.sub(combinedCenter));
-        clone.rotation.set(0, 0, 0);
-        clone.scale.setScalar(1);
+        // Get this mesh's world position and place relative to limb center
+        const meshWorldPos = new THREE.Vector3();
+        mesh.getWorldPosition(meshWorldPos);
+        clone.position.copy(meshWorldPos.sub(limbWorldCenter));
+        // Preserve the mesh's world rotation and scale
+        const meshWorldQuat = new THREE.Quaternion();
+        mesh.getWorldQuaternion(meshWorldQuat);
+        clone.quaternion.copy(meshWorldQuat);
+        const meshWorldScale = new THREE.Vector3();
+        mesh.getWorldScale(meshWorldScale);
+        clone.scale.copy(meshWorldScale);
         group.add(clone);
       }
-
-      // Apply robot's scale so clones match in-game size
-      group.scale.setScalar(this.robotScale);
 
       if (part.type === 'arm') {
         // Arm lying on its side in the snow
@@ -867,72 +866,75 @@ export class GameScene {
     // ========== STATE 0: BROKEN — face down, left arm only ==========
     if (repairState === 0) {
       if (isMoving) {
-        // Desperate one-arm army crawl with left arm
-        // 3-phase cycle: REACH (arm extends) → PLANT (elbow locks) → PULL (drag body)
-        const phase = Math.sin(t);
-        const reachPhase = Math.max(0, -phase);   // arm extending forward
-        const pullPhase = Math.max(0, phase);      // arm pulling body
+        // Desperate one-arm army crawl — dramatic clawing motion
+        // Slow, heavy cycle: REACH far forward → DIG IN → HEAVE body forward
+        const cycle = Math.sin(t * 0.9); // slower cycle for weight
+        const reach = Math.max(0, -cycle);  // arm extending forward (0-1)
+        const pull = Math.max(0, cycle);    // arm pulling body (0-1)
 
-        // Shoulder swings forward then back
-        leftShoulder = phase * 0.8;
-        // Elbow: bends during reach (arm curls to plant), straightens during pull
-        leftElbow = -reachPhase * 0.6 - 0.15;     // negative = bend forward
+        // Shoulder: big swing — reaches far forward, pulls hard back
+        leftShoulder = cycle * 1.2;
+        // Elbow: extends during reach, bends hard during pull (digging in)
+        leftElbow = -reach * 0.8 - pull * 0.4 - 0.2;
 
-        // Body follows arm pull with slight delay
-        animY = pullPhase * 0.035;
-        animRotX = ease(phase) * 0.08;
-        // Body twists toward arm side during pull
-        animRotZ = phase * 0.1 + Math.sin(t * 0.6) * 0.06;
+        // Body heaves forward with each pull — the payoff of the motion
+        animY = pull * 0.06 - 0.02;
+        // Body tilts forward during reach, back during pull
+        animRotX = ease(cycle) * 0.12;
+        // Body twists toward arm — whole torso rotates with the effort
+        animRotZ = cycle * 0.18 + Math.sin(t * 0.5) * 0.04;
 
-        // Secondary: body drag shimmy
-        animY += Math.sin(t * 2.3) * 0.012;
+        // Body drag friction: slight shimmy
+        animY += Math.sin(t * 2.5) * 0.01;
       } else {
-        // Idle: weak arm twitches, labored breathing
-        const breathe = Math.sin(t * 0.5);
-        animY = breathe * 0.008;
-        animRotZ = Math.sin(t * 0.4) * 0.03;
-        leftShoulder = Math.sin(t * 0.3) * 0.05;
-        leftElbow = -0.2 + Math.sin(t * 0.4) * 0.04; // slightly bent, twitching
+        // Idle: collapsed, labored breathing, occasional arm twitch
+        const breathe = Math.sin(t * 0.4);
+        animY = breathe * 0.012;
+        animRotZ = Math.sin(t * 0.3) * 0.04;
+        // Arm lies forward, twitching weakly
+        leftShoulder = 0.3 + Math.sin(t * 0.25) * 0.08;
+        leftElbow = -0.3 + Math.sin(t * 0.35) * 0.06;
       }
     }
 
     // ========== STATE 1: TWO ARM CRAWL (right_arm collected) ==========
     else if (repairState === 1) {
       if (isMoving) {
-        // Alternating two-arm crawl: left plants while right reaches, then swap
-        const cycle = Math.sin(t);
+        // Two-arm belly crawl — alternating reach-and-pull
+        const cycle = Math.sin(t * 1.1);
 
-        // Arms in opposite phase
-        rightShoulder = cycle * 0.75;
-        leftShoulder = -cycle * 0.75;
+        // Arms in opposite phase — big dramatic swings
+        rightShoulder = cycle * 1.0;
+        leftShoulder = -cycle * 1.0;
 
-        // Elbows: bend during reach phase (negative cycle for right, positive for left)
-        // Lock straight during pull phase
+        // Elbows: extend on reach, bend hard on pull
         const rightReach = Math.max(0, -cycle);
         const leftReach = Math.max(0, cycle);
-        rightElbow = -rightReach * 0.55 - 0.1;
-        leftElbow = -leftReach * 0.55 - 0.1;
+        const rightPull = Math.max(0, cycle);
+        const leftPull = Math.max(0, -cycle);
+        rightElbow = -rightReach * 0.7 - rightPull * 0.3 - 0.15;
+        leftElbow = -leftReach * 0.7 - leftPull * 0.3 - 0.15;
 
-        // Body: lifts during each pull, rocks side to side
+        // Body: lurches forward with each pull cycle
         const eitherPull = Math.abs(cycle);
-        animY = eitherPull * 0.04;
+        animY = eitherPull * 0.05 - 0.02;
 
-        // Lateral rock: body shifts toward the pulling arm
-        animRotZ = cycle * 0.12;
+        // Lateral rock: body rolls toward pulling arm
+        animRotZ = cycle * 0.15;
 
-        // Forward/back pump synced to arm cycle
-        animRotX = Math.sin(t * 2) * 0.05;
+        // Forward pump — nose dips on reach, lifts on pull
+        animRotX = Math.sin(t * 2.2) * 0.07;
 
-        // Secondary shimmy
-        animY += Math.sin(t * 2.1) * 0.015;
+        // Drag shimmy
+        animY += Math.sin(t * 2.3) * 0.012;
       } else {
-        // Idle: arms resting, slight breathing
-        animY = Math.sin(t * 0.5) * 0.006;
-        animRotZ = Math.sin(t * 0.5) * 0.02;
-        rightShoulder = 0.1 + Math.sin(t * 0.35) * 0.04;
-        leftShoulder = 0.1 + Math.sin(t * 0.35 + 0.8) * 0.04;
-        rightElbow = -0.15;
-        leftElbow = -0.15;
+        // Idle: propped on both arms, slight sway
+        animY = Math.sin(t * 0.5) * 0.008;
+        animRotZ = Math.sin(t * 0.45) * 0.03;
+        rightShoulder = 0.25 + Math.sin(t * 0.3) * 0.06;
+        leftShoulder = 0.25 + Math.sin(t * 0.3 + 0.8) * 0.06;
+        rightElbow = -0.25;
+        leftElbow = -0.25;
       }
     }
 
