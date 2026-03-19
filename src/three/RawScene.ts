@@ -398,12 +398,14 @@ export class GameScene {
         group.add(clone);
       }
 
-      group.position.set(part.position[0], 0.15, part.position[2]);
+      group.position.set(part.position[0], -0.05, part.position[2]);
 
       if (part.type === 'arm') {
-        group.rotation.set(-0.1, 0.4, Math.PI / 2 + 0.2);
+        // Arm lying flat on snow, slightly tilted as if it fell
+        group.rotation.set(-0.15, 0.3, Math.PI / 2 + 0.05);
       } else {
-        group.rotation.set(Math.PI / 2 - 0.1, 0.3, 0.15);
+        // Leg lying flat on snow, partially buried
+        group.rotation.set(Math.PI / 2 + 0.05, 0.2, 0.1);
       }
 
       this.scene.add(group);
