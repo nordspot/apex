@@ -135,7 +135,18 @@ export class GameScene {
     this.painterly.setQuality(isMobile ? 'low' : 'medium');
 
     window.addEventListener('resize', this.onResize);
+
+    // Subscribe to game phase changes for reset
+    let prevPhase = useUIStore.getState().gamePhase;
+    this.unsubPhase = useUIStore.subscribe((state) => {
+      if (state.gamePhase !== prevPhase) {
+        prevPhase = state.gamePhase;
+        if (state.gamePhase === 'start') this.resetGame();
+      }
+    });
   }
+
+  private unsubPhase: (() => void) | null = null;
 
   private loadRobot() {
     this.loader.load('/models/robot.glb', (gltf) => {
@@ -203,10 +214,36 @@ export class GameScene {
 
     const midX = fullCenter.x;
     const bottomY = fullBox.min.y;
+    const topY = fullBox.max.y;
+
+    // Log ALL meshes for debugging
+    console.log(`[APEX] Robot bounds: bottom=${bottomY.toFixed(3)} top=${topY.toFixed(3)} center=(${midX.toFixed(2)}, ${fullCenter.y.toFixed(2)}), size=(${fullSize.x.toFixed(2)}, ${fullSize.y.toFixed(2)}, ${fullSize.z.toFixed(2)})`);
+    for (const { mesh, worldCenter, worldBox } of allMeshes) {
+      const sz = worldBox.getSize(new THREE.Vector3());
+      console.log(`  mesh: "${mesh.name}" center=(${worldCenter.x.toFixed(3)}, ${worldCenter.y.toFixed(3)}, ${worldCenter.z.toFixed(3)}) size=(${sz.x.toFixed(3)}, ${sz.y.toFixed(3)}, ${sz.z.toFixed(3)})`);
+    }
+
+    // Remove antenna/sphere: any mesh whose BOTTOM is above 90% of robot height
+    const antennaThresholdY = bottomY + fullSize.y * 0.88;
+    const meshesToRemove: THREE.Mesh[] = [];
+    for (const { mesh, worldBox } of allMeshes) {
+      if (worldBox.min.y > antennaThresholdY) {
+        console.log(`  [REMOVE] antenna/sphere: "${mesh.name}" (bottom=${worldBox.min.y.toFixed(3)} > ${antennaThresholdY.toFixed(3)})`);
+        meshesToRemove.push(mesh);
+      }
+    }
+    for (const mesh of meshesToRemove) {
+      mesh.removeFromParent();
+      allMeshes.splice(allMeshes.findIndex(m => m.mesh === mesh), 1);
+    }
 
     // Classification thresholds (world space)
-    const hipY = bottomY + fullSize.y * 0.55;
-    const armThresholdX = fullSize.x * 0.12;
+    // hipY: the boundary between torso and legs — at ~45% from bottom
+    const hipY = bottomY + fullSize.y * 0.45;
+    // armThresholdX: minimum X distance from center to be considered an arm
+    const armThresholdX = fullSize.x * 0.15;
+    // Arm must be above this Y to avoid classifying hip-area meshes as arms
+    const armMinY = bottomY + fullSize.y * 0.50;
 
     const regions: Record<string, THREE.Mesh[]> = {
       right_arm: [], left_arm: [], left_leg: [], right_leg: [],
@@ -215,15 +252,15 @@ export class GameScene {
     for (const { mesh, worldCenter } of allMeshes) {
       const distFromCenter = Math.abs(worldCenter.x - midX);
 
-      if (distFromCenter > armThresholdX && worldCenter.y > hipY * 0.8) {
-        // Far from center = arm (model is flipped PI, so world X is inverted)
+      if (distFromCenter > armThresholdX && worldCenter.y > armMinY) {
+        // Far from center AND above hip = arm (model is flipped PI, so world X is inverted)
         if (worldCenter.x > midX) {
           regions.left_arm.push(mesh);
         } else {
           regions.right_arm.push(mesh);
         }
-      } else if (worldCenter.y < hipY && distFromCenter > armThresholdX * 0.3) {
-        // Below hip and not dead center = leg (includes feet)
+      } else if (worldCenter.y < hipY && distFromCenter > armThresholdX * 0.2) {
+        // Below hip line and offset from center = leg (includes feet, hip motors)
         if (worldCenter.x > midX) {
           regions.left_leg.push(mesh);
         } else {
@@ -232,7 +269,7 @@ export class GameScene {
       }
     }
 
-    console.log(`[APEX] Robot bounds: center=(${midX.toFixed(2)}, ${fullCenter.y.toFixed(2)}), size=(${fullSize.x.toFixed(2)}, ${fullSize.y.toFixed(2)}, ${fullSize.z.toFixed(2)})`);
+    console.log(`[APEX] Thresholds: hipY=${hipY.toFixed(3)} armMinY=${armMinY.toFixed(3)} armThresholdX=${armThresholdX.toFixed(3)}`);
     console.log(`[APEX] Classification: LA=${regions.left_arm.length} RA=${regions.right_arm.length} LL=${regions.left_leg.length} RL=${regions.right_leg.length} total=${allMeshes.length}`);
     for (const [region, meshes] of Object.entries(regions)) {
       for (const m of meshes) {
@@ -398,24 +435,28 @@ export class GameScene {
         group.add(clone);
       }
 
+      // Scale down the scattered part so it looks like a detached piece, not full-size
+      const partScale = 0.5;
+      group.scale.setScalar(partScale);
+
       // Compute local bounding box of all clones, then shift down so bottom = 0
       const localBox = new THREE.Box3();
       for (const child of group.children) {
         localBox.expandByObject(child);
       }
-      const bottomY = localBox.min.y;
+      const localBottom = localBox.min.y;
       for (const child of group.children) {
-        child.position.y -= bottomY; // shift so bottom of group sits at y=0
+        child.position.y -= localBottom;
       }
 
       if (part.type === 'arm') {
         // Arm lying on its side in the snow, partially buried
         group.rotation.set(0, 0.3, Math.PI / 2);
-        group.position.set(part.position[0], -0.08, part.position[2]);
+        group.position.set(part.position[0], -0.03, part.position[2]);
       } else {
         // Leg lying flat on snow, partially buried
         group.rotation.set(Math.PI / 2, 0.2, 0.1);
-        group.position.set(part.position[0], -0.08, part.position[2]);
+        group.position.set(part.position[0], -0.03, part.position[2]);
       }
 
       this.scene.add(group);
@@ -597,6 +638,71 @@ export class GameScene {
     cancelAnimationFrame(this.animFrameId);
     window.removeEventListener('resize', this.onResize);
     if (this.painterly) this.painterly.dispose();
+    if (this.unsubPhase) this.unsubPhase();
+  }
+
+  /** Reset game state: move MEMO-9 to origin, re-hide limbs, show scattered parts */
+  private resetGame() {
+    // Reset MEMO-9 position
+    this.memo9.position.set(0, 0, 0);
+    this.memo9.rotation.set(0, 0, 0);
+
+    // Reset animation/pose state
+    this.walkCycle = 0;
+    this.targetPoseY = -this.robotBaseY;
+    this.targetPoseRotX = 1.3;
+    this.targetPoseRotZ = 0;
+    this.prevRepairState = 0;
+    this.stateTransitionT = 1;
+    this.cameraAngle = Math.PI;
+    this.currentCamConfig = { ...CAMERA_CONFIGS[0] };
+
+    // Re-hide collected limbs on robot body
+    for (const [partId, meshes] of this.hiddenLimbMeshes) {
+      for (const mesh of meshes) {
+        mesh.visible = false;
+      }
+    }
+
+    // Show scattered ground parts again
+    for (const [partId, group] of this.partGroups) {
+      group.visible = true;
+    }
+
+    // Reset limb pivot rotations
+    for (const [, pivot] of this.limbPivots) {
+      pivot.rotation.set(0, 0, 0);
+    }
+    for (const [, pivot] of this.elbowPivots) {
+      pivot.rotation.set(0, 0, 0);
+    }
+    for (const [, pivot] of this.kneePivots) {
+      pivot.rotation.set(0, 0, 0);
+    }
+
+    // Reset robot model pose
+    if (this.robotModel) {
+      this.robotModel.position.y = this.robotBaseY;
+      this.robotModel.rotation.x = 0;
+      this.robotModel.rotation.z = 0;
+    }
+
+    // Reset snow deformation
+    if (this.snowGeo && this.snowBaseY) {
+      const posAttr = this.snowGeo.attributes.position;
+      for (let i = 0; i < posAttr.count; i++) {
+        posAttr.setY(i, this.snowBaseY[i]);
+      }
+      posAttr.needsUpdate = true;
+      // Reset vertex colors
+      const colorAttr = this.snowGeo.attributes.color;
+      if (colorAttr) {
+        for (let i = 0; i < colorAttr.count; i++) {
+          colorAttr.setXYZ(i, 1, 1, 1);
+        }
+        colorAttr.needsUpdate = true;
+      }
+    }
   }
 
   private animate = () => {
