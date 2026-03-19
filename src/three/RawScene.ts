@@ -316,7 +316,7 @@ export class GameScene {
 
       const upperMeshes: THREE.Mesh[] = [];
       const lowerMeshes: THREE.Mesh[] = [];
-      for (const { mesh: m, localCenter } of allMeshes) {
+      for (const { mesh: m } of allMeshes) {
         if (!meshes.includes(m)) continue;
         // Use world-space Y for upper/lower split
         const wBox = new THREE.Box3().setFromObject(m);
@@ -669,14 +669,14 @@ export class GameScene {
     this.currentCamConfig = { ...CAMERA_CONFIGS[0] };
 
     // Re-hide collected limbs on robot body
-    for (const [partId, meshes] of this.hiddenLimbMeshes) {
+    for (const [, meshes] of this.hiddenLimbMeshes) {
       for (const mesh of meshes) {
         mesh.visible = false;
       }
     }
 
     // Show scattered ground parts again
-    for (const [partId, group] of this.partGroups) {
+    for (const [, group] of this.partGroups) {
       group.visible = true;
     }
 
