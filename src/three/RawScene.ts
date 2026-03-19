@@ -5,6 +5,7 @@ import { REPAIR_SPEEDS, LEVEL1_PARTS } from '../types/game';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useInputStore } from '../systems/InputManager';
+import { PainterlyPipeline } from './PainterlyPipeline';
 
 const INTERACTION_RADIUS = 2.5;
 const CRATE_POS = new THREE.Vector3(0, 0, 21);
@@ -85,6 +86,9 @@ export class GameScene {
   private readonly SNOW_SIZE = 60;     // meters, covers play area
   private readonly SNOW_SEGS = 200;    // vertex density for deformation
 
+  // Painterly post-processing pipeline
+  private painterly: PainterlyPipeline | null = null;
+
   private animFrameId = 0;
   private loader = new GLTFLoader();
 
@@ -123,6 +127,12 @@ export class GameScene {
 
     this.loadRobot();
     this.loadMountains();
+
+    // Painterly post-processing (Wild Robot style)
+    this.painterly = new PainterlyPipeline(this.renderer, this.scene, this.camera);
+    // Auto-detect quality based on device
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    this.painterly.setQuality(isMobile ? 'low' : 'medium');
 
     window.addEventListener('resize', this.onResize);
   }
@@ -575,6 +585,7 @@ export class GameScene {
   stop() {
     cancelAnimationFrame(this.animFrameId);
     window.removeEventListener('resize', this.onResize);
+    if (this.painterly) this.painterly.dispose();
   }
 
   private animate = () => {
@@ -586,7 +597,11 @@ export class GameScene {
     this.updateParts(delta);
     this.updateCamera(delta);
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.painterly) {
+      this.painterly.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   };
 
   private updateMovement(delta: number) {
@@ -1136,8 +1151,11 @@ export class GameScene {
   }
 
   private onResize = () => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h);
+    if (this.painterly) this.painterly.setSize(w, h);
   };
 }
