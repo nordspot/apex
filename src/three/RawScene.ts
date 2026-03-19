@@ -762,9 +762,9 @@ export class GameScene {
       const t = this.walkCycle;
       if (repairState === 0) {
         // State 0: one-arm crawl, cycle = sin(t * 0.9)
-        // Pull phase = when cycle > 0 (arm pulling back = body moves forward)
+        // Pull phase = when cycle < 0 (arm pulling back = body moves forward)
         const cycle = Math.sin(t * 0.9);
-        const pullForce = Math.max(0, cycle); // 0 during reach, 0→1 during pull
+        const pullForce = Math.max(0, -cycle); // 0 during reach, 0→1 during pull
         effectiveSpeed = speed * pullForce * 2.5; // amplify since it's only half the cycle
       } else if (repairState === 1) {
         // State 1: two-arm crawl, alternating — always one arm pulling
@@ -899,12 +899,12 @@ export class GameScene {
         const pull = Math.max(0, cycle);    // 0→1 during backward pull
 
         // Shoulder: asymmetric — reaches WAY forward (over head), pulls to hip
-        // Negative = forward (since body is face-down with positive rotX)
-        // With body at ~1.45 rad, we need ~2.0+ to get arm ahead of head
-        leftShoulder = -reach * 2.4 + pull * 0.8;
+        // Positive rotation.x = arm forward, negative = arm backward
+        // With body at ~1.45 rad face-down, need large values to reach past head
+        leftShoulder = reach * 2.4 - pull * 0.8;
 
         // Elbow: fully extended during reach (straight arm), bends hard on pull
-        leftElbow = -reach * 0.15 - pull * 1.2 - 0.1;
+        leftElbow = reach * 0.15 - pull * 1.2 - 0.1;
 
         // Body heaves forward with each pull
         animY = pull * 0.08 - 0.03;
@@ -921,7 +921,7 @@ export class GameScene {
         animY = breathe * 0.012;
         animRotZ = Math.sin(t * 0.3) * 0.04;
         // Arm resting extended forward
-        leftShoulder = -0.8 + Math.sin(t * 0.25) * 0.12;
+        leftShoulder = 0.8 + Math.sin(t * 0.25) * 0.12;
         leftElbow = -0.2 + Math.sin(t * 0.35) * 0.06;
       }
     }
@@ -940,12 +940,13 @@ export class GameScene {
         const leftPull = Math.max(0, -cycle);     // left pulls when cycle < 0
 
         // Shoulders: big asymmetric swing — far forward over head, pull to hip
-        rightShoulder = -rightReach * 2.2 + rightPull * 0.7;
-        leftShoulder = -leftReach * 2.2 + leftPull * 0.7;
+        // Positive rotation.x = arm forward, negative = arm backward
+        rightShoulder = rightReach * 2.2 - rightPull * 0.7;
+        leftShoulder = leftReach * 2.2 - leftPull * 0.7;
 
         // Elbows: extend straight during reach, bend hard during pull
-        rightElbow = -rightReach * 0.15 - rightPull * 1.0 - 0.1;
-        leftElbow = -leftReach * 0.15 - leftPull * 1.0 - 0.1;
+        rightElbow = rightReach * 0.15 - rightPull * 1.0 - 0.1;
+        leftElbow = leftReach * 0.15 - leftPull * 1.0 - 0.1;
 
         // Body lurches forward with each pull
         const eitherPull = Math.abs(cycle);
@@ -963,8 +964,8 @@ export class GameScene {
         // Idle: propped on both arms extended forward
         animY = Math.sin(t * 0.5) * 0.008;
         animRotZ = Math.sin(t * 0.45) * 0.03;
-        rightShoulder = -0.6 + Math.sin(t * 0.3) * 0.08;
-        leftShoulder = -0.6 + Math.sin(t * 0.3 + 0.8) * 0.08;
+        rightShoulder = 0.6 + Math.sin(t * 0.3) * 0.08;
+        leftShoulder = 0.6 + Math.sin(t * 0.3 + 0.8) * 0.08;
         rightElbow = -0.2;
         leftElbow = -0.2;
       }
