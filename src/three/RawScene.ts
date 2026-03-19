@@ -890,75 +890,83 @@ export class GameScene {
     // ========== STATE 0: BROKEN — face down, left arm only ==========
     if (repairState === 0) {
       if (isMoving) {
-        // Desperate one-arm army crawl — dramatic clawing motion
-        // Slow, heavy cycle: REACH far forward → DIG IN → HEAVE body forward
-        const cycle = Math.sin(t * 0.9); // slower cycle for weight
-        const reach = Math.max(0, -cycle);  // arm extending forward (0-1)
-        const pull = Math.max(0, cycle);    // arm pulling body (0-1)
+        // Desperate one-arm army crawl — arm reaches FAR forward over head,
+        // plants into snow, then DRAGS body forward.
+        // Body is tilted at rotX≈1.45 (nearly face-down), so shoulder must
+        // swing huge angles to visually reach "in front" on the ground.
+        const cycle = Math.sin(t * 0.9);
+        const reach = Math.max(0, -cycle);  // 0→1 during forward reach
+        const pull = Math.max(0, cycle);    // 0→1 during backward pull
 
-        // Shoulder: big swing — reaches far forward, pulls hard back
-        leftShoulder = cycle * 1.2;
-        // Elbow: extends during reach, bends hard during pull (digging in)
-        leftElbow = -reach * 0.8 - pull * 0.4 - 0.2;
+        // Shoulder: asymmetric — reaches WAY forward (over head), pulls to hip
+        // Negative = forward (since body is face-down with positive rotX)
+        // With body at ~1.45 rad, we need ~2.0+ to get arm ahead of head
+        leftShoulder = -reach * 2.4 + pull * 0.8;
 
-        // Body heaves forward with each pull — the payoff of the motion
-        animY = pull * 0.06 - 0.02;
-        // Body tilts forward during reach, back during pull
-        animRotX = ease(cycle) * 0.12;
-        // Body twists toward arm — whole torso rotates with the effort
-        animRotZ = cycle * 0.18 + Math.sin(t * 0.5) * 0.04;
+        // Elbow: fully extended during reach (straight arm), bends hard on pull
+        leftElbow = -reach * 0.15 - pull * 1.2 - 0.1;
 
-        // Body drag friction: slight shimmy
+        // Body heaves forward with each pull
+        animY = pull * 0.08 - 0.03;
+        // Body lifts slightly during reach (gathering), drops on pull (effort)
+        animRotX = -reach * 0.2 + pull * 0.15;
+        // Body twists toward arm with effort
+        animRotZ = cycle * 0.22 + Math.sin(t * 0.5) * 0.04;
+
+        // Body drag friction shimmy
         animY += Math.sin(t * 2.5) * 0.01;
       } else {
-        // Idle: collapsed, labored breathing, occasional arm twitch
+        // Idle: collapsed, arm stretched forward weakly
         const breathe = Math.sin(t * 0.4);
         animY = breathe * 0.012;
         animRotZ = Math.sin(t * 0.3) * 0.04;
-        // Arm lies forward, twitching weakly
-        leftShoulder = 0.3 + Math.sin(t * 0.25) * 0.08;
-        leftElbow = -0.3 + Math.sin(t * 0.35) * 0.06;
+        // Arm resting extended forward
+        leftShoulder = -0.8 + Math.sin(t * 0.25) * 0.12;
+        leftElbow = -0.2 + Math.sin(t * 0.35) * 0.06;
       }
     }
 
     // ========== STATE 1: TWO ARM CRAWL (right_arm collected) ==========
     else if (repairState === 1) {
       if (isMoving) {
-        // Two-arm belly crawl — alternating reach-and-pull
+        // Two-arm belly crawl — alternating arms reach far forward over head
+        // then plant and drag the body forward
         const cycle = Math.sin(t * 1.1);
 
-        // Arms in opposite phase — big dramatic swings
-        rightShoulder = cycle * 1.0;
-        leftShoulder = -cycle * 1.0;
+        // Each arm: negative = reaching forward (over head), positive = pulling back
+        const rightReach = Math.max(0, -cycle);  // right reaches when cycle < 0
+        const rightPull = Math.max(0, cycle);     // right pulls when cycle > 0
+        const leftReach = Math.max(0, cycle);     // left reaches when cycle > 0
+        const leftPull = Math.max(0, -cycle);     // left pulls when cycle < 0
 
-        // Elbows: extend on reach, bend hard on pull
-        const rightReach = Math.max(0, -cycle);
-        const leftReach = Math.max(0, cycle);
-        const rightPull = Math.max(0, cycle);
-        const leftPull = Math.max(0, -cycle);
-        rightElbow = -rightReach * 0.7 - rightPull * 0.3 - 0.15;
-        leftElbow = -leftReach * 0.7 - leftPull * 0.3 - 0.15;
+        // Shoulders: big asymmetric swing — far forward over head, pull to hip
+        rightShoulder = -rightReach * 2.2 + rightPull * 0.7;
+        leftShoulder = -leftReach * 2.2 + leftPull * 0.7;
 
-        // Body: lurches forward with each pull cycle
+        // Elbows: extend straight during reach, bend hard during pull
+        rightElbow = -rightReach * 0.15 - rightPull * 1.0 - 0.1;
+        leftElbow = -leftReach * 0.15 - leftPull * 1.0 - 0.1;
+
+        // Body lurches forward with each pull
         const eitherPull = Math.abs(cycle);
-        animY = eitherPull * 0.05 - 0.02;
+        animY = eitherPull * 0.06 - 0.02;
 
         // Lateral rock: body rolls toward pulling arm
-        animRotZ = cycle * 0.15;
+        animRotZ = cycle * 0.18;
 
-        // Forward pump — nose dips on reach, lifts on pull
-        animRotX = Math.sin(t * 2.2) * 0.07;
+        // Body pumps forward/back with effort
+        animRotX = -Math.abs(cycle) * 0.08 + 0.04;
 
         // Drag shimmy
-        animY += Math.sin(t * 2.3) * 0.012;
+        animY += Math.sin(t * 2.3) * 0.01;
       } else {
-        // Idle: propped on both arms, slight sway
+        // Idle: propped on both arms extended forward
         animY = Math.sin(t * 0.5) * 0.008;
         animRotZ = Math.sin(t * 0.45) * 0.03;
-        rightShoulder = 0.25 + Math.sin(t * 0.3) * 0.06;
-        leftShoulder = 0.25 + Math.sin(t * 0.3 + 0.8) * 0.06;
-        rightElbow = -0.25;
-        leftElbow = -0.25;
+        rightShoulder = -0.6 + Math.sin(t * 0.3) * 0.08;
+        leftShoulder = -0.6 + Math.sin(t * 0.3 + 0.8) * 0.08;
+        rightElbow = -0.2;
+        leftElbow = -0.2;
       }
     }
 
