@@ -911,10 +911,12 @@ export class GameScene {
     this.targetPoseRotZ = THREE.MathUtils.lerp(this.targetPoseRotZ, goalRotZ, poseLerp);
 
     // ========== KIMODO AI ANIMATION (if available) ==========
-    if (this.kimodoReady) {
-      this.updateKimodoAnimation(delta, isMoving, repairState);
-      return;
-    }
+    // Disabled: synthetic fallback produces similar motion to procedural code below.
+    // Re-enable when real Kimodo API access is available for AI-generated motion.
+    // if (this.kimodoReady) {
+    //   this.updateKimodoAnimation(delta, isMoving, repairState);
+    //   return;
+    // }
 
     // ========== WALK CYCLE ==========
     const cycleSpeed = isMoving
