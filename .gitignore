@@ -28,3 +28,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Kimodo pipeline build artifacts
+tools/kimodo/__pycache__/
+tools/kimodo/output/

@@ -6,9 +6,18 @@ import { usePlayerStore } from '../stores/usePlayerStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useInputStore } from '../systems/InputManager';
 import { PainterlyPipeline } from './PainterlyPipeline';
+import { KimodoAnimator } from './KimodoAnimator';
 
 const INTERACTION_RADIUS = 2.5;
 const CRATE_POS = new THREE.Vector3(0, 0, 21);
+
+// Kimodo animation mapping: repairState → { idle, moving } animation names
+const KIMODO_STATE_MAP: Record<number, { idle: string; moving: string }> = {
+  0: { idle: 'fallen_idle',    moving: 'one_arm_crawl' },
+  1: { idle: 'crawl_idle',     moving: 'belly_crawl' },
+  2: { idle: 'hobble_idle',    moving: 'hobble_walk' },
+  3: { idle: 'standard_idle',  moving: 'walking' },
+};
 
 interface CameraConfig {
   height: number;
@@ -86,6 +95,11 @@ export class GameScene {
   private readonly SNOW_SIZE = 60;     // meters, covers play area
   private readonly SNOW_SEGS = 200;    // vertex density for deformation
 
+  // Kimodo AI-generated animations (replaces procedural when available)
+  private kimodo: KimodoAnimator = new KimodoAnimator();
+  private kimodoReady = false;
+  private kimodoCurrentAnim = '';  // Track which animation is playing
+
   // Painterly post-processing pipeline
   private painterly: PainterlyPipeline | null = null;
 
@@ -127,6 +141,7 @@ export class GameScene {
 
     this.loadRobot();
     this.loadMountains();
+    this.loadKimodoAnimations();
 
     // Painterly post-processing (Wild Robot style)
     this.painterly = new PainterlyPipeline(this.renderer, this.scene, this.camera);
@@ -185,6 +200,18 @@ export class GameScene {
       // Classify meshes into body regions, create limb pivots, and scatter parts
       this.setupLimbs(model, scaleFactor);
     });
+  }
+
+  private async loadKimodoAnimations() {
+    try {
+      await this.kimodo.loadManifest('/animations/kimodo/manifest.json');
+      await this.kimodo.preloadAll();
+      this.kimodoReady = true;
+      console.log('[APEX] Kimodo animations ready');
+    } catch {
+      // Kimodo animations not generated yet — use procedural fallback
+      console.log('[APEX] Kimodo animations not available, using procedural animation');
+    }
   }
 
   // Elbow pivots (child of shoulder pivot, like knee is child of hip)
@@ -296,13 +323,19 @@ export class GameScene {
       const limbSize = limbBox.getSize(new THREE.Vector3());
 
       // Shoulder = top of arm, toward body center
+      // With rotation.y = PI:
+      //   left_arm meshes are in world +X → inner edge (shoulder) = limbBox.min.x (toward 0)
+      //   right_arm meshes are in world -X → inner edge (shoulder) = limbBox.max.x (toward 0)
       const shoulderWorld = new THREE.Vector3(
         armId === 'left_arm'
-          ? limbBox.min.x   // left arm: inner edge is min X (toward center)
-          : limbBox.max.x,  // right arm: inner edge is max X (toward center)
+          ? limbBox.min.x   // left arm in world +X: min.x = inner edge toward center
+          : limbBox.max.x,  // right arm in world -X: max.x = inner edge toward center
         limbBox.max.y - limbSize.y * 0.05,
         (limbBox.min.z + limbBox.max.z) / 2,
       );
+
+      console.log(`[APEX] ${armId} worldBox: min=(${limbBox.min.x.toFixed(3)},${limbBox.min.y.toFixed(3)},${limbBox.min.z.toFixed(3)}) max=(${limbBox.max.x.toFixed(3)},${limbBox.max.y.toFixed(3)},${limbBox.max.z.toFixed(3)})`);
+      console.log(`[APEX] ${armId} shoulderWorld: (${shoulderWorld.x.toFixed(3)},${shoulderWorld.y.toFixed(3)},${shoulderWorld.z.toFixed(3)})`);
 
       // Elbow at Y midpoint
       const elbowSplitY = (limbBox.min.y + limbBox.max.y) / 2;
@@ -322,6 +355,8 @@ export class GameScene {
         if (wCenter.y >= elbowSplitY) upperMeshes.push(m);
         else lowerMeshes.push(m);
       }
+
+      console.log(`[APEX] ${armId} upper=${upperMeshes.length} lower=${lowerMeshes.length} (elbowSplitY=${elbowSplitY.toFixed(3)})`);
 
       // Create shoulder pivot in model-local space
       const shoulderLocal = shoulderWorld.clone();
@@ -354,6 +389,9 @@ export class GameScene {
 
       this.limbPivots.set(armId, shoulderPivot);
       this.elbowPivots.set(armId, elbowPivot);
+      const upperCount = shoulderPivot.children.filter(c => (c as THREE.Mesh).isMesh).length;
+      const lowerCount = elbowPivot.children.filter(c => (c as THREE.Mesh).isMesh).length;
+      console.log(`[APEX] ${armId} pivot: upper=${upperCount} meshes in shoulder, lower=${lowerCount} meshes in elbow, shoulderLocal=(${shoulderLocal.x.toFixed(3)},${shoulderLocal.y.toFixed(3)},${shoulderLocal.z.toFixed(3)})`);
     }
 
     // --- Create leg pivots with knee sub-pivots ---
@@ -671,6 +709,8 @@ export class GameScene {
     this.stateTransitionT = 1;
     this.cameraAngle = Math.PI;
     this.currentCamConfig = { ...CAMERA_CONFIGS[0] };
+    this.kimodoCurrentAnim = '';
+    this.kimodo.stop();
 
     // Re-hide collected limbs on robot body
     for (const [, meshes] of this.hiddenLimbMeshes) {
@@ -869,6 +909,12 @@ export class GameScene {
     this.targetPoseY = THREE.MathUtils.lerp(this.targetPoseY, goalY, poseLerp);
     this.targetPoseRotX = THREE.MathUtils.lerp(this.targetPoseRotX, goalRotX, poseLerp);
     this.targetPoseRotZ = THREE.MathUtils.lerp(this.targetPoseRotZ, goalRotZ, poseLerp);
+
+    // ========== KIMODO AI ANIMATION (if available) ==========
+    if (this.kimodoReady) {
+      this.updateKimodoAnimation(delta, isMoving, repairState);
+      return;
+    }
 
     // ========== WALK CYCLE ==========
     const cycleSpeed = isMoving
@@ -1106,6 +1152,109 @@ export class GameScene {
     if (rightElbowPivot) rightElbowPivot.rotation.x = THREE.MathUtils.lerp(rightElbowPivot.rotation.x, rightElbow, limbLerp);
 
     // ========== SNOW DEFORMATION ==========
+    this.deformSnow(isMoving, repairState);
+  }
+
+  /**
+   * Kimodo AI animation path — uses pre-generated animations from NVIDIA Kimodo
+   * instead of hand-tuned procedural math. Selects animation based on repair state
+   * and movement, applies pose to mesh pivots with crossfading.
+   */
+  private updateKimodoAnimation(delta: number, isMoving: boolean, repairState: number) {
+    // Determine which animation should play
+    const stateMap = KIMODO_STATE_MAP[repairState];
+    if (!stateMap) return;
+
+    const targetAnim = isMoving ? stateMap.moving : stateMap.idle;
+
+    // Switch animation if needed (with crossfade)
+    if (targetAnim !== this.kimodoCurrentAnim) {
+      this.kimodoCurrentAnim = targetAnim;
+      this.kimodo.play(targetAnim, { loop: true, crossfade: 0.25 }).catch(() => {
+        // Animation not found — fall back silently
+        this.kimodoReady = false;
+      });
+    }
+
+    // Sample current pose
+    const pose = this.kimodo.sample(delta);
+
+    // If no animation data yet (still loading), just apply base posture
+    if (Object.keys(pose.pivots).length === 0) {
+      this.robotModel!.position.y = this.robotBaseY + this.targetPoseY;
+      this.robotModel!.rotation.x = this.targetPoseRotX;
+      this.robotModel!.rotation.z = THREE.MathUtils.lerp(
+        this.robotModel!.rotation.z, this.targetPoseRotZ, Math.min(8 * delta, 1));
+      return;
+    }
+
+    // Apply body posture (same base posture as procedural, Kimodo adds on top)
+    const animRotX = pose.bodyTiltX;
+    const animY = pose.rootTranslation.y * 0.1; // Scale down — Kimodo uses real-world meters
+
+    this.robotModel!.position.y = this.robotBaseY + this.targetPoseY + animY;
+    this.robotModel!.rotation.x = this.targetPoseRotX + animRotX;
+
+    const targetZ = this.targetPoseRotZ;
+    this.robotModel!.rotation.z = THREE.MathUtils.lerp(
+      this.robotModel!.rotation.z,
+      targetZ,
+      Math.min(8 * delta, 1),
+    );
+
+    // Apply pivot rotations from Kimodo pose
+    const limbLerp = Math.min(14 * delta, 1);
+    const pivots = pose.pivots;
+
+    // Shoulders
+    const leftShoulderPivot = this.limbPivots.get('left_arm');
+    if (leftShoulderPivot) {
+      const angle = pivots['left_arm_shoulder'] ?? 0;
+      leftShoulderPivot.rotation.x = THREE.MathUtils.lerp(leftShoulderPivot.rotation.x, angle, limbLerp);
+    }
+    const rightShoulderPivot = this.limbPivots.get('right_arm');
+    if (rightShoulderPivot) {
+      const angle = pivots['right_arm_shoulder'] ?? 0;
+      rightShoulderPivot.rotation.x = THREE.MathUtils.lerp(rightShoulderPivot.rotation.x, angle, limbLerp);
+    }
+
+    // Elbows
+    const leftElbowPivot = this.elbowPivots.get('left_arm');
+    if (leftElbowPivot) {
+      const angle = pivots['left_arm_elbow'] ?? 0;
+      leftElbowPivot.rotation.x = THREE.MathUtils.lerp(leftElbowPivot.rotation.x, angle, limbLerp);
+    }
+    const rightElbowPivot = this.elbowPivots.get('right_arm');
+    if (rightElbowPivot) {
+      const angle = pivots['right_arm_elbow'] ?? 0;
+      rightElbowPivot.rotation.x = THREE.MathUtils.lerp(rightElbowPivot.rotation.x, angle, limbLerp);
+    }
+
+    // Hips
+    const leftHipPivot = this.limbPivots.get('left_leg');
+    if (leftHipPivot) {
+      const angle = pivots['left_leg_hip'] ?? 0;
+      leftHipPivot.rotation.x = THREE.MathUtils.lerp(leftHipPivot.rotation.x, angle, limbLerp);
+    }
+    const rightHipPivot = this.limbPivots.get('right_leg');
+    if (rightHipPivot) {
+      const angle = pivots['right_leg_hip'] ?? 0;
+      rightHipPivot.rotation.x = THREE.MathUtils.lerp(rightHipPivot.rotation.x, angle, limbLerp);
+    }
+
+    // Knees
+    const leftKneePivot = this.kneePivots.get('left_leg');
+    if (leftKneePivot) {
+      const angle = pivots['left_leg_knee'] ?? 0;
+      leftKneePivot.rotation.x = THREE.MathUtils.lerp(leftKneePivot.rotation.x, angle, limbLerp);
+    }
+    const rightKneePivot = this.kneePivots.get('right_leg');
+    if (rightKneePivot) {
+      const angle = pivots['right_leg_knee'] ?? 0;
+      rightKneePivot.rotation.x = THREE.MathUtils.lerp(rightKneePivot.rotation.x, angle, limbLerp);
+    }
+
+    // Snow deformation still works the same
     this.deformSnow(isMoving, repairState);
   }
 
