@@ -2,71 +2,71 @@
   "version": 1,
   "mode": "pivot",
   "animations": {
-    "belly_crawl": {
-      "file": "belly_crawl.json",
-      "loop": true,
-      "duration": 5,
-      "prompt": "A person army crawls forward on their belly using both arms alternately, pulling themselves along the ground, legs dragging behind, military low crawl"
-    },
-    "celebrate": {
-      "file": "celebrate.json",
-      "loop": false,
-      "duration": 3,
-      "prompt": "A person raises both arms in triumph, fist pump celebration, victorious pose"
-    },
-    "crawl_idle": {
-      "file": "crawl_idle.json",
-      "loop": true,
-      "duration": 4,
-      "prompt": "A person lies on their stomach propped up on both arms, looking around slowly, resting"
-    },
     "fallen_idle": {
       "file": "fallen_idle.json",
       "loop": true,
       "duration": 4,
-      "prompt": "A person lies face down on the ground, barely moving, breathing slowly, exhausted"
-    },
-    "happy_walk": {
-      "file": "happy_walk.json",
-      "loop": true,
-      "duration": 3,
-      "prompt": "A person walks forward with a happy energetic bounce in their step, arms swinging with enthusiasm, celebrating"
-    },
-    "hobble_idle": {
-      "file": "hobble_idle.json",
-      "loop": true,
-      "duration": 4,
-      "prompt": "A person stands on one leg, slightly unsteady, shifting weight, arms at sides for balance"
-    },
-    "hobble_walk": {
-      "file": "hobble_walk.json",
-      "loop": true,
-      "duration": 4,
-      "prompt": "A person hops forward on one leg, using arms for balance, injured gait, limping without one leg"
+      "prompt": "Robot lying face down, broken, breathing weakly"
     },
     "one_arm_crawl": {
       "file": "one_arm_crawl.json",
       "loop": true,
-      "duration": 5,
-      "prompt": "A person lying face down drags themselves forward using only their right arm, pulling their body along the ground with great effort, legs limp and dragging behind"
+      "duration": 2.2,
+      "prompt": "One-arm army crawl, desperate dragging motion"
     },
-    "picking_up": {
-      "file": "picking_up.json",
-      "loop": false,
+    "crawl_idle": {
+      "file": "crawl_idle.json",
+      "loop": true,
+      "duration": 3.5,
+      "prompt": "Propped up on both arms, looking around alertly"
+    },
+    "belly_crawl": {
+      "file": "belly_crawl.json",
+      "loop": true,
+      "duration": 1.8,
+      "prompt": "Two-arm alternating crawl, determined"
+    },
+    "hobble_idle": {
+      "file": "hobble_idle.json",
+      "loop": true,
       "duration": 3,
-      "prompt": "A person bends down and picks something up from the ground with their right hand, then stands back up"
+      "prompt": "Standing on one leg, arms out for balance, swaying"
+    },
+    "hobble_walk": {
+      "file": "hobble_walk.json",
+      "loop": true,
+      "duration": 1.4,
+      "prompt": "Pronounced limp, hopping on one leg with arm windmill"
     },
     "standard_idle": {
       "file": "standard_idle.json",
       "loop": true,
       "duration": 4,
-      "prompt": "A person stands still in a relaxed pose, weight shifting slightly, arms relaxed at sides, gentle breathing"
+      "prompt": "Natural standing idle with weight shifts and breathing"
     },
     "walking": {
       "file": "walking.json",
       "loop": true,
+      "duration": 1.6,
+      "prompt": "Confident bipedal walk with arm counter-swing"
+    },
+    "happy_walk": {
+      "file": "happy_walk.json",
+      "loop": true,
+      "duration": 1.4,
+      "prompt": "Bouncy happy walk, recovered and confident"
+    },
+    "picking_up": {
+      "file": "picking_up.json",
+      "loop": false,
+      "duration": 2,
+      "prompt": "Bending down to pick something up"
+    },
+    "celebrate": {
+      "file": "celebrate.json",
+      "loop": false,
       "duration": 3,
-      "prompt": "A person walks forward at a normal pace, relaxed confident gait, arms swinging naturally"
+      "prompt": "Victory celebration with fist pump"
     }
   }
 }
