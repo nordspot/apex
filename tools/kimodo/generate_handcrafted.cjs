@@ -120,37 +120,37 @@ const one_arm_crawl = generateAnimation('one_arm_crawl', 2.2, true,
     let shoulder, elbow, bodyTilt, bodyY, bodyRoll;
 
     if (cycleT < 0.3) {
-      // REACH: arm extends forward fast
+      // REACH: arm extends forward along ground
       const p = easeOut(cycleT / 0.3);
-      shoulder = lerp(-1.2, 0.7, p);  // swing from pulled-back to forward
-      elbow = lerp(0.9, 0.1, p);      // straighten out
-      bodyTilt = lerp(0.08, -0.12, p); // body lifts slightly
-      bodyY = lerp(0.06, -0.02, p);    // up during reach
-      bodyRoll = lerp(0.15, -0.08, p); // roll toward reaching side
+      shoulder = lerp(0.05, 0.6, p);   // from beside body to extended forward
+      elbow = lerp(0.6, 0.1, p);       // straighten out as reaching
+      bodyTilt = lerp(0.05, -0.1, p);  // body lifts slightly
+      bodyY = lerp(0.04, -0.01, p);    // up during reach
+      bodyRoll = lerp(0.1, -0.06, p);  // roll toward reaching side
     } else if (cycleT < 0.4) {
-      // DIG IN: hand plants, brief pause
+      // DIG IN: hand plants on ground, brief pause
       const p = (cycleT - 0.3) / 0.1;
-      shoulder = lerp(0.7, 0.5, p);
-      elbow = lerp(0.1, 0.3, p);  // slight bend as weight loads
-      bodyTilt = -0.12;
-      bodyY = -0.02;
-      bodyRoll = -0.08 + p * 0.05;
+      shoulder = lerp(0.6, 0.5, p);    // stays forward, settles in
+      elbow = lerp(0.1, 0.25, p);      // slight bend as weight loads
+      bodyTilt = -0.1;
+      bodyY = -0.01;
+      bodyRoll = -0.06 + p * 0.04;
     } else if (cycleT < 0.85) {
-      // PULL: slow, powerful drag — the money move
+      // PULL: drag body forward — arm goes from extended to beside body
       const p = easeIn((cycleT - 0.4) / 0.45);
-      shoulder = lerp(0.5, -1.5, p);   // arm pulls way back
-      elbow = lerp(0.3, 1.1, p);       // deep bend, really digging
-      bodyTilt = lerp(-0.12, 0.15, p);  // body lurches forward
-      bodyY = lerp(-0.02, 0.1, p);      // body drags forward
-      bodyRoll = lerp(-0.03, 0.22, p);  // twist with effort
+      shoulder = lerp(0.5, 0.05, p);   // arm pulls to beside body (NOT behind)
+      elbow = lerp(0.25, 0.7, p);      // elbow bends as arm shortens
+      bodyTilt = lerp(-0.1, 0.1, p);   // body lurches forward
+      bodyY = lerp(-0.01, 0.08, p);    // body drags forward
+      bodyRoll = lerp(-0.02, 0.18, p); // twist with effort
     } else {
-      // RESET: quick return
+      // RESET: quick return to start position
       const p = easeInOut((cycleT - 0.85) / 0.15);
-      shoulder = lerp(-1.5, -1.2, p);
-      elbow = lerp(1.1, 0.9, p);
-      bodyTilt = lerp(0.15, 0.08, p);
-      bodyY = lerp(0.1, 0.06, p);
-      bodyRoll = lerp(0.22, 0.15, p);
+      shoulder = lerp(0.05, 0.05, p);  // stays beside body
+      elbow = lerp(0.7, 0.6, p);       // stays bent
+      bodyTilt = lerp(0.1, 0.05, p);
+      bodyY = lerp(0.08, 0.04, p);
+      bodyRoll = lerp(0.18, 0.1, p);
     }
 
     return {
@@ -206,21 +206,21 @@ const belly_crawl = generateAnimation('belly_crawl', 1.8, true,
     const rightPhase = phase;
     const leftPhase = phase + Math.PI;
 
-    // Each arm: reach forward → plant → pull back
+    // Each arm: reach forward → plant → pull to beside body (never behind)
     function armCurve(p) {
       const norm = ((p % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2);
       if (norm < 0.35) {
-        // Reach
+        // Reach forward
         const t2 = easeOut(norm / 0.35);
-        return { shoulder: lerp(-1.0, 0.6, t2), elbow: lerp(0.8, 0.1, t2) };
+        return { shoulder: lerp(0.05, 0.55, t2), elbow: lerp(0.6, 0.1, t2) };
       } else if (norm < 0.65) {
-        // Pull
+        // Pull: arm goes from extended forward to beside body
         const t2 = easeIn((norm - 0.35) / 0.3);
-        return { shoulder: lerp(0.6, -1.2, t2), elbow: lerp(0.1, 0.9, t2) };
+        return { shoulder: lerp(0.55, 0.05, t2), elbow: lerp(0.1, 0.65, t2) };
       } else {
-        // Reset/glide
+        // Glide: arm stays beside body, ready for next reach
         const t2 = easeInOut((norm - 0.65) / 0.35);
-        return { shoulder: lerp(-1.2, -1.0, t2), elbow: lerp(0.9, 0.8, t2) };
+        return { shoulder: lerp(0.05, 0.05, t2), elbow: lerp(0.65, 0.6, t2) };
       }
     }
 
