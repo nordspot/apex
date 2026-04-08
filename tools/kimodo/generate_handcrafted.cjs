@@ -95,8 +95,8 @@ const fallen_idle = generateAnimation('fallen_idle', 4.0, true,
     return {
       bodyTiltX: breathe * 0.03 + twitch * 0.02,
       rootY: breathe * 0.008,
-      // Left arm draped forward, occasional finger-curl twitch
-      left_arm_shoulder: 0.2 + sin(t * 0.5) * 0.1 + twitch * 0.15,
+      // Left arm resting forward along ground (body tilt ~1.45, so shoulder ~0.1 = horizontal)
+      left_arm_shoulder: -0.3 + sin(t * 0.5) * 0.1 + twitch * 0.15,
       left_arm_elbow: 0.15 + sin(t * 0.6) * 0.05,
       // Right arm missing - values ignored but set to 0
       right_arm_shoulder: 0,
@@ -119,35 +119,41 @@ const one_arm_crawl = generateAnimation('one_arm_crawl', 2.2, true,
     // Phase breakdown: reach=0-0.3, dig=0.3-0.4, pull=0.4-0.85, reset=0.85-1.0
     let shoulder, elbow, bodyTilt, bodyY, bodyRoll;
 
+    // Body tilt for state 0 is ~1.45 rad (nearly face-down).
+    // shoulder 0 → total 1.45 → arm angled forward-down
+    // shoulder 0.12 → total 1.57 → arm horizontal forward (ground level)
+    // shoulder -0.75 → total 0.7 → arm beside body, angled down
+    // NEVER go past shoulder -1.45 (total 0 = straight down = behind)
+
     if (cycleT < 0.3) {
-      // REACH: arm extends forward along ground
+      // REACH: arm extends forward along ground (not above head!)
       const p = easeOut(cycleT / 0.3);
-      shoulder = lerp(0.05, 0.6, p);   // from beside body to extended forward
-      elbow = lerp(0.6, 0.1, p);       // straighten out as reaching
-      bodyTilt = lerp(0.05, -0.1, p);  // body lifts slightly
-      bodyY = lerp(0.04, -0.01, p);    // up during reach
-      bodyRoll = lerp(0.1, -0.06, p);  // roll toward reaching side
+      shoulder = lerp(-0.6, 0.12, p);  // from beside body to horizontal forward
+      elbow = lerp(0.6, 0.15, p);      // straighten out as reaching
+      bodyTilt = lerp(0.05, -0.08, p); // body lifts slightly
+      bodyY = lerp(0.04, -0.01, p);
+      bodyRoll = lerp(0.1, -0.06, p);
     } else if (cycleT < 0.4) {
-      // DIG IN: hand plants on ground, brief pause
+      // DIG IN: hand plants on ground
       const p = (cycleT - 0.3) / 0.1;
-      shoulder = lerp(0.6, 0.5, p);    // stays forward, settles in
-      elbow = lerp(0.1, 0.25, p);      // slight bend as weight loads
-      bodyTilt = -0.1;
+      shoulder = lerp(0.12, 0.05, p);  // settles slightly
+      elbow = lerp(0.15, 0.3, p);      // slight bend as weight loads
+      bodyTilt = -0.08;
       bodyY = -0.01;
       bodyRoll = -0.06 + p * 0.04;
     } else if (cycleT < 0.85) {
-      // PULL: drag body forward — arm goes from extended to beside body
+      // PULL: drag body forward — arm goes from forward to beside body
       const p = easeIn((cycleT - 0.4) / 0.45);
-      shoulder = lerp(0.5, 0.05, p);   // arm pulls to beside body (NOT behind)
-      elbow = lerp(0.25, 0.7, p);      // elbow bends as arm shortens
-      bodyTilt = lerp(-0.1, 0.1, p);   // body lurches forward
-      bodyY = lerp(-0.01, 0.08, p);    // body drags forward
-      bodyRoll = lerp(-0.02, 0.18, p); // twist with effort
+      shoulder = lerp(0.05, -0.7, p);  // arm pulls back beside body
+      elbow = lerp(0.3, 0.7, p);       // elbow bends as arm shortens
+      bodyTilt = lerp(-0.08, 0.1, p);  // body lurches forward
+      bodyY = lerp(-0.01, 0.08, p);
+      bodyRoll = lerp(-0.02, 0.18, p);
     } else {
-      // RESET: quick return to start position
+      // RESET: quick return to start
       const p = easeInOut((cycleT - 0.85) / 0.15);
-      shoulder = lerp(0.05, 0.05, p);  // stays beside body
-      elbow = lerp(0.7, 0.6, p);       // stays bent
+      shoulder = lerp(-0.7, -0.6, p);  // stays beside body
+      elbow = lerp(0.7, 0.6, p);
       bodyTilt = lerp(0.1, 0.05, p);
       bodyY = lerp(0.08, 0.04, p);
       bodyRoll = lerp(0.18, 0.1, p);
@@ -206,21 +212,23 @@ const belly_crawl = generateAnimation('belly_crawl', 1.8, true,
     const rightPhase = phase;
     const leftPhase = phase + Math.PI;
 
-    // Each arm: reach forward → plant → pull to beside body (never behind)
+    // Body tilt for state 1 is ~1.0 rad (~57° forward).
+    // shoulder 0.57 → total 1.57 → arm horizontal forward (ground level)
+    // shoulder -0.3 → total 0.7 → arm beside body
     function armCurve(p) {
       const norm = ((p % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2);
       if (norm < 0.35) {
-        // Reach forward
+        // Reach forward along ground
         const t2 = easeOut(norm / 0.35);
-        return { shoulder: lerp(0.05, 0.55, t2), elbow: lerp(0.6, 0.1, t2) };
+        return { shoulder: lerp(-0.2, 0.5, t2), elbow: lerp(0.5, 0.15, t2) };
       } else if (norm < 0.65) {
-        // Pull: arm goes from extended forward to beside body
+        // Pull: arm goes from forward to beside body
         const t2 = easeIn((norm - 0.35) / 0.3);
-        return { shoulder: lerp(0.55, 0.05, t2), elbow: lerp(0.1, 0.65, t2) };
+        return { shoulder: lerp(0.5, -0.3, t2), elbow: lerp(0.15, 0.55, t2) };
       } else {
-        // Glide: arm stays beside body, ready for next reach
+        // Glide: arm beside body, ready for next reach
         const t2 = easeInOut((norm - 0.65) / 0.35);
-        return { shoulder: lerp(0.05, 0.05, t2), elbow: lerp(0.65, 0.6, t2) };
+        return { shoulder: lerp(-0.3, -0.2, t2), elbow: lerp(0.55, 0.5, t2) };
       }
     }
 
