@@ -1160,10 +1160,14 @@ export class GameScene {
    * instead of hand-tuned procedural math. Selects animation based on repair state
    * and movement, applies pose to mesh pivots with crossfading.
    */
+  private _kimodoLogCount = 0;
   private updateKimodoAnimation(delta: number, isMoving: boolean, repairState: number) {
     // Determine which animation should play
     const stateMap = KIMODO_STATE_MAP[repairState];
     if (!stateMap) return;
+    if (this._kimodoLogCount++ < 5) {
+      console.log(`[Kimodo] updateKimodoAnimation called, state=${repairState}, isMoving=${isMoving}, anim=${this.kimodoCurrentAnim}`);
+    }
 
     const targetAnim = isMoving ? stateMap.moving : stateMap.idle;
 
@@ -1178,6 +1182,13 @@ export class GameScene {
 
     // Sample current pose
     const pose = this.kimodo.sample(delta);
+
+    if (this._kimodoLogCount < 8) {
+      console.log(`[Kimodo] pose pivots: ${Object.keys(pose.pivots).length}, bodyTiltX: ${pose.bodyTiltX.toFixed(3)}, rootY: ${pose.rootTranslation.y.toFixed(3)}`);
+      if (Object.keys(pose.pivots).length > 0) {
+        console.log(`[Kimodo] left_arm_shoulder=${(pose.pivots['left_arm_shoulder'] ?? 'MISSING').toString()}, left_leg_hip=${(pose.pivots['left_leg_hip'] ?? 'MISSING').toString()}`);
+      }
+    }
 
     // If no animation data yet (still loading), just apply base posture
     if (Object.keys(pose.pivots).length === 0) {
