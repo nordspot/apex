@@ -5,8 +5,8 @@
     "fallen_idle": {
       "file": "fallen_idle.json",
       "loop": true,
-      "duration": 4,
-      "prompt": "Robot lying face down, broken, breathing weakly"
+      "duration": 4.0,
+      "prompt": "Fallen on ground from LaFan mocap"
     },
     "one_arm_crawl": {
       "file": "one_arm_crawl.json",
@@ -18,13 +18,13 @@
       "file": "crawl_idle.json",
       "loop": true,
       "duration": 3.5,
-      "prompt": "Propped up on both arms, looking around alertly"
+      "prompt": "Ground idle from LaFan mocap"
     },
     "belly_crawl": {
       "file": "belly_crawl.json",
       "loop": true,
-      "duration": 1.8,
-      "prompt": "Two-arm alternating crawl, determined"
+      "duration": 3.0,
+      "prompt": "Ground crawling from LaFan mocap"
     },
     "hobble_idle": {
       "file": "hobble_idle.json",
@@ -47,14 +47,14 @@
     "walking": {
       "file": "walking.json",
       "loop": true,
-      "duration": 1.6,
-      "prompt": "Confident bipedal walk with arm counter-swing"
+      "duration": 1.933333,
+      "prompt": "Natural walking from LaFan mocap"
     },
     "happy_walk": {
       "file": "happy_walk.json",
       "loop": true,
       "duration": 1.4,
-      "prompt": "Bouncy happy walk, recovered and confident"
+      "prompt": "Confident walking from LaFan mocap"
     },
     "picking_up": {
       "file": "picking_up.json",

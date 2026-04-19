@@ -32,3 +32,4 @@ dist-ssr
 # Kimodo pipeline build artifacts
 tools/kimodo/__pycache__/
 tools/kimodo/output/
+tools/mocap/__pycache__/
