@@ -34,19 +34,36 @@ JOINT_MAP = {
 
 SPINE_JOINTS = ['Spine', 'Spine1', 'Spine2', 'Spine3']
 
-# Sign and offset corrections per pivot.
-# BVH data may have offsets from rest pose that we need to subtract.
-# sign: multiply BVH value by this (-1 to flip)
-# offset: subtract this from BVH value (rest pose angle)
+# Corrections to map BVH euler rotations to our pivot system.
+# Our system: 0 = neutral pose (arm straight, leg straight).
+# BVH: euler angles include rest-pose offsets.
+#
+# Measured rest-pose offsets from BVH walking data:
+#   Elbows: ~+1.0 rad (arms slightly bent at rest)
+#   Hips: ~-0.3 rad (slight hip flexion at rest)
+#   Everything else: ~0
+#
+# Our expected ranges (from working hand-crafted anims):
+#   shoulder: -0.5 to +0.3
+#   elbow:    -0.35 to -0.1
+#   hip:      -0.2 to +0.35
+#   knee:     -0.65 to 0
+#
+# BVH raw ranges:
+#   shoulder: -0.7 to +0.3  (ok, maybe slightly scale)
+#   elbow:    +0.5 to +1.4  (need offset -1.0, then negate)
+#   hip:      -1.0 to +0.3  (scale down ~0.5x)
+#   knee:     -1.4 to -0.1  (scale down ~0.5x)
+
 CORRECTIONS = {
-    'left_arm_shoulder':  {'sign': 1.0, 'offset': 0.0},
-    'left_arm_elbow':     {'sign': 1.0, 'offset': 0.0},
-    'right_arm_shoulder': {'sign': 1.0, 'offset': 0.0},
-    'right_arm_elbow':    {'sign': 1.0, 'offset': 0.0},
-    'left_leg_hip':       {'sign': 1.0, 'offset': 0.0},
-    'left_leg_knee':      {'sign': -1.0, 'offset': 0.0},  # Negate: BVH positive bend -> our negative bend
-    'right_leg_hip':      {'sign': 1.0, 'offset': 0.0},
-    'right_leg_knee':     {'sign': -1.0, 'offset': 0.0},
+    'left_arm_shoulder':  {'sign': 1.0, 'offset': 0.0,  'scale': 0.7},
+    'left_arm_elbow':     {'sign': -1.0, 'offset': 1.0, 'scale': 0.3},  # subtract rest bend, negate, scale small
+    'right_arm_shoulder': {'sign': 1.0, 'offset': 0.0,  'scale': 0.7},
+    'right_arm_elbow':    {'sign': -1.0, 'offset': 0.8, 'scale': 0.3},
+    'left_leg_hip':       {'sign': 1.0, 'offset': 0.0,  'scale': 0.5},
+    'left_leg_knee':      {'sign': -1.0, 'offset': 0.0, 'scale': 0.5},  # Negate: BVH raw is negative, but got flipped
+    'right_leg_hip':      {'sign': 1.0, 'offset': 0.0,  'scale': 0.5},
+    'right_leg_knee':     {'sign': -1.0, 'offset': 0.0, 'scale': 0.5},
 }
 
 
@@ -71,7 +88,7 @@ def extract_segment(bvh: BVHData, start: int, end: int, target_fps: int = 30,
         if joint:
             for f in frames:
                 euler = bvh.get_rotation_euler(joint, f)
-                val = (euler[0] - corr['offset']) * corr['sign']
+                val = (euler[0] - corr['offset']) * corr['sign'] * corr.get('scale', 1.0)
                 angles.append(round(float(val), 6))
         else:
             angles = [0.0] * num_frames
